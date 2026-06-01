@@ -127,7 +127,7 @@ research-agent/
 
 **Aniket Jaiswal**
 - GitHub: [@Aniket-Jaiswal2002](https://github.com/Aniket-Jaiswal2002)
-- LinkedIn: [Add your LinkedIn]
+- LinkedIn: [Aniket Jaiswal](https://www.linkedin.com/in/aniket-jaiswal-6748a5248/)
 
 ## 📄 License
 
