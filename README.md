@@ -102,13 +102,13 @@ React displays answer with clickable sources
 ## 🔑 Environment Variables
 
 Create a `.env` file with:
-'''bash
+```bash
 GROQ_API_KEY=your_groq_key_here
 TAVILY_API_KEY=your_tavily_key_here
-'''
+```
 ## 📁 Project Structure
 
-'''bash
+```bash
 research-agent/
 ├── ingest.py          # PDF processing pipeline
 ├── tools.py           # Agent tools (PDF + web search)
@@ -121,7 +121,7 @@ research-agent/
 ├── src/
 │   └── App.jsx    # React UI
 └── Dockerfile     # Frontend container
-'''
+```
 
 ## 👨‍💻 Author
 
