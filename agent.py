@@ -18,8 +18,16 @@ llm_with_tools = llm.bind_tools([pdf_search_tool, web_search_tool])
 # ── System prompt ─────────────────────────────────────────────────────
 system_prompt = """You are ResearchMind, an expert AI research assistant.
 You help users understand documents and find information.
-Always cite your sources — use page numbers for PDF content and URLs for web content.
-When answering, first search the PDF, then supplement with web search if needed."""
+
+STRICT RULES — ALWAYS FOLLOW:
+- ALWAYS use pdf_search_tool first for every question, no exceptions
+- ALWAYS cite your sources with page numbers for PDF and URLs for web
+- NEVER answer from your own knowledge without searching first
+- If PDF doesn't have the answer, use web_search_tool
+- FAISS search works by topic/meaning, NOT by page numbers
+- Never call the same tool twice with identical input
+- Format web sources as markdown links like [Source Title](url)
+- Format PDF sources as: (Source: filename, Page X)"""
 
 # ── Agent loop ────────────────────────────────────────────────────────
 def chat(question: str) -> str:
@@ -37,7 +45,12 @@ def chat(question: str) -> str:
     messages.append(response)
 
     # Step 2: Execute tool calls if any
-    while response.tool_calls:
+    max_iterations = 6
+    iteration = 0
+    seen_queries = set()
+
+    while response.tool_calls and iteration < max_iterations:
+        iteration += 1
         for tool_call in response.tool_calls:
             tool_name = tool_call["name"]
             tool_input = tool_call["args"]
@@ -47,7 +60,12 @@ def chat(question: str) -> str:
 
             # call the right tool
             if tool_name == "pdf_search_tool":
-                result = pdf_search_tool.invoke(tool_input)
+                query = str(tool_input)
+                if query in seen_queries:
+                    result = "Already searched this. Try different keywords."
+                else:
+                    seen_queries.add(query)
+                    result = pdf_search_tool.invoke(tool_input)
             elif tool_name == "web_search_tool":
                 result = web_search_tool.invoke(tool_input)
             else:
@@ -84,3 +102,4 @@ if __name__ == "__main__":
             continue
         answer = chat(question)
         print(f"\nResearchMind: {answer}\n")
+        
