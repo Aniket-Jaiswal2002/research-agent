@@ -8,18 +8,38 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Load embedding model and vector store ─────────────────────────────
-# Same model we used in ingest.py — must match!
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-def load_vector_store():
-    """Loads FAISS index and chunks from disk"""
-    index = faiss.read_index("vector_store/index.faiss")
-    with open("vector_store/chunks.pkl", "rb") as f:
+# ── Active PDF tracker ────────────────────────────────────────────────
+# This keeps track of which PDF is currently selected
+active_pdf = {"name": None}
+
+def set_active_pdf(pdf_name: str):
+    """Set which PDF the agent should search"""
+    active_pdf["name"] = pdf_name
+
+def load_vector_store(pdf_name: str = None):
+    """Load FAISS index for a specific PDF or the active one"""
+    name = pdf_name or active_pdf["name"]
+    
+    if not name:
+        # fallback — try old single vector store
+        if os.path.exists("vector_store/index.faiss"):
+            import faiss as f
+            index = f.read_index("vector_store/index.faiss")
+            with open("vector_store/chunks.pkl", "rb") as f:
+                chunks = pickle.load(f)
+            return index, chunks
+        raise FileNotFoundError("No PDF loaded")
+    
+    path = f"vector_store/{name}"
+    index = faiss.read_index(f"{path}/index.faiss")
+    with open(f"{path}/chunks.pkl", "rb") as f:
         chunks = pickle.load(f)
     return index, chunks
 
-# ── Tool 1: PDF Search ────────────────────────────────────────────────
+import os
+
 @tool
 def pdf_search_tool(query: str) -> str:
     """
@@ -30,11 +50,9 @@ def pdf_search_tool(query: str) -> str:
     try:
         index, chunks = load_vector_store()
 
-        # convert question to vector — same way we converted chunks
         query_vector = model.encode([query])
         query_vector = np.array(query_vector, dtype=np.float32)
 
-        # search FAISS for top 4 most similar chunks
         distances, indices = index.search(query_vector, k=4)
 
         results = []
@@ -54,10 +72,9 @@ def pdf_search_tool(query: str) -> str:
         return "\n\n---\n\n".join(results)
 
     except FileNotFoundError:
-        return "No PDF has been ingested yet. Please run ingest.py first."
+        return "No PDF has been loaded. Please upload a PDF first."
 
 
-# ── Tool 2: Web Search ────────────────────────────────────────────────
 web_search_tool = TavilySearchResults(
     max_results=3,
     include_answer=True,
@@ -70,5 +87,4 @@ web_search_tool = TavilySearchResults(
     )
 )
 
-# ── Export tools as a list ────────────────────────────────────────────
 tools = [pdf_search_tool, web_search_tool]

@@ -1,79 +1,77 @@
-import fitz  # this is pymupdf — reads PDF files
+import fitz
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
 import pickle
 import os
+import re
 
-# ── Load the embedding model ──────────────────────────────────────────
-# This model converts text into vectors (numbers)
-# "all-MiniLM-L6-v2" is small, fast, and works great for search
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-def ingest_pdf(pdf_path: str):
-    """
-    Reads a PDF, splits it into chunks,
-    converts chunks to vectors, stores in FAISS
-    """
+def clean_name(filename: str) -> str:
+    """Convert filename to a clean folder name"""
+    name = os.path.splitext(filename)[0]  # remove .pdf
+    name = re.sub(r'[^a-zA-Z0-9-_]', '-', name)  # replace special chars
+    return name.lower()
 
+def ingest_pdf(pdf_path: str):
     print(f"Reading PDF: {pdf_path}")
 
-    # ── Step 1: Read the PDF ──────────────────────────────────────────
     doc = fitz.open(pdf_path)
-    chunks = []  # will store (text, page_number) pairs
+    chunks = []
 
     for page_num, page in enumerate(doc):
-        text = page.get_text()  # extract raw text from page
-
-        # skip empty pages
+        text = page.get_text()
         if not text.strip():
             continue
-
-        # split page into chunks of ~500 characters
-        # why? because LLMs work better with smaller focused chunks
         words = text.split()
-        chunk_size = 150  # roughly 150 words per chunk
+        chunk_size = 150
         for i in range(0, len(words), chunk_size):
             chunk = " ".join(words[i:i + chunk_size])
             chunks.append({
                 "text": chunk,
-                "page": page_num + 1,  # page numbers start at 1
+                "page": page_num + 1,
                 "source": os.path.basename(pdf_path)
             })
 
     print(f"Created {len(chunks)} chunks from {len(doc)} pages")
 
-    # ── Step 2: Convert chunks to vectors ────────────────────────────
-    # This is called "embedding" — turning text into numbers
-    # so FAISS can compare and search them mathematically
     print("Converting chunks to vectors...")
     texts = [chunk["text"] for chunk in chunks]
     vectors = model.encode(texts, show_progress_bar=True)
 
-    # ── Step 3: Store vectors in FAISS ───────────────────────────────
-    # FAISS needs to know the size of each vector
-    dimension = vectors.shape[1]  # typically 384 for this model
-    index = faiss.IndexFlatL2(dimension)  # L2 = euclidean distance search
-    index.add(np.array(vectors))  # add all vectors to the index
+    dimension = vectors.shape[1]
+    index = faiss.IndexFlatL2(dimension)
+    index.add(np.array(vectors))
 
-    # ── Step 4: Save everything to disk ──────────────────────────────
-    # We save both the FAISS index and the original chunks
-    # because FAISS only stores vectors, not the original text
-    os.makedirs("vector_store", exist_ok=True)
-    faiss.write_index(index, "vector_store/index.faiss")
+    # ── Save to its own folder ────────────────────────────────────────
+    pdf_name = clean_name(os.path.basename(pdf_path))
+    save_dir = f"vector_store/{pdf_name}"
+    os.makedirs(save_dir, exist_ok=True)
 
-    with open("vector_store/chunks.pkl", "wb") as f:
+    faiss.write_index(index, f"{save_dir}/index.faiss")
+    with open(f"{save_dir}/chunks.pkl", "wb") as f:
         pickle.dump(chunks, f)
 
-    print(f"Done! Saved {len(chunks)} chunks to vector_store/")
-    return len(chunks)
+    print(f"Done! Saved {len(chunks)} chunks to {save_dir}/")
+    return len(chunks), pdf_name
 
 
-# ── Run this file directly to test it ────────────────────────────────
+def list_pdfs() -> list:
+    """Returns list of all ingested PDFs"""
+    if not os.path.exists("vector_store"):
+        return []
+    pdfs = []
+    for folder in os.listdir("vector_store"):
+        folder_path = f"vector_store/{folder}"
+        if os.path.isdir(folder_path) and os.path.exists(f"{folder_path}/index.faiss"):
+            pdfs.append(folder)
+    return pdfs
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
         print("Usage: python ingest.py yourfile.pdf")
     else:
         ingest_pdf(sys.argv[1])
-        

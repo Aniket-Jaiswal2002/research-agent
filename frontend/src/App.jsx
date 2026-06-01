@@ -14,40 +14,64 @@ export default function App() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [pdfLoaded, setPdfLoaded] = useState(false);
-  const [pdfName, setPdfName] = useState("");
+  const [pdfs, setPdfs] = useState([]);
+  const [activePdf, setActivePdf] = useState(null);
   const bottomRef = useRef(null);
   const fileRef = useRef(null);
 
-  // auto scroll to bottom on new message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // check if PDF is already loaded on startup
   useEffect(() => {
-    axios.get(`${API}/status`).then((res) => {
-      setPdfLoaded(res.data.pdf_loaded);
-    });
+    fetchPdfs();
   }, []);
+
+  const fetchPdfs = async () => {
+    try {
+      const res = await axios.get(`${API}/status`);
+      setPdfs(res.data.pdfs || []);
+      setActivePdf(res.data.active_pdf);
+    } catch (err) {
+      console.log("Backend not ready yet");
+    }
+  };
+
+  const selectPdf = async (pdfName) => {
+    try {
+      await axios.post(`${API}/select-pdf`, { pdf_name: pdfName });
+      setActivePdf(pdfName);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `📄 Switched to **${pdfName}**. Ask me anything about it!`,
+        },
+      ]);
+    } catch (err) {
+      console.error("Failed to select PDF");
+    }
+  };
 
   const uploadPDF = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     setUploading(true);
-    setPdfName(file.name);
 
     const formData = new FormData();
     formData.append("file", file);
 
     try {
       const res = await axios.post(`${API}/upload`, formData);
-      setPdfLoaded(true);
+      setActivePdf(res.data.pdf_name);
+      setPdfs((prev) =>
+        prev.includes(res.data.pdf_name) ? prev : [...prev, res.data.pdf_name]
+      );
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: `✅ **${file.name}** uploaded successfully!\n\n${res.data.chunks} chunks indexed. Ask me anything about it!`,
+          content: `✅ **${file.name}** uploaded!\n\n${res.data.chunks} chunks indexed. Ask me anything about it!`,
         },
       ]);
     } catch (err) {
@@ -57,12 +81,12 @@ export default function App() {
       ]);
     } finally {
       setUploading(false);
+      fetchPdfs();
     }
   };
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
-
     const question = input.trim();
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: question }]);
@@ -93,7 +117,7 @@ export default function App() {
 
   return (
     <div style={styles.root}>
-      {/* ── Sidebar ── */}
+      {/* Sidebar */}
       <div style={styles.sidebar}>
         <div style={styles.logo}>
           <span style={styles.logoIcon}>🔬</span>
@@ -101,9 +125,10 @@ export default function App() {
         </div>
 
         <p style={styles.sidebarDesc}>
-          Your AI research assistant. Upload a PDF and ask anything.
+          Your AI research assistant. Upload PDFs and ask anything.
         </p>
 
+        {/* Upload button */}
         <div style={styles.uploadBox} onClick={() => fileRef.current.click()}>
           <input
             type="file"
@@ -115,18 +140,35 @@ export default function App() {
           {uploading ? (
             <div style={styles.uploadInner}>
               <div style={styles.spinner} />
-              <span>Processing PDF...</span>
+              <span style={{ color: "#c4b5fd", fontSize: 13 }}>Processing PDF...</span>
+              <span style={{ color: "#4b5563", fontSize: 11 }}>This may take 10-15 seconds</span>
             </div>
           ) : (
             <div style={styles.uploadInner}>
               <span style={{ fontSize: 28 }}>📄</span>
-              <span style={styles.uploadText}>
-                {pdfLoaded ? `✅ ${pdfName || "PDF loaded"}` : "Click to upload PDF"}
-              </span>
+              <span style={styles.uploadText}>Click to upload PDF</span>
               <span style={styles.uploadSub}>Supports any PDF up to 500 pages</span>
             </div>
           )}
         </div>
+
+        {/* PDF Library */}
+        {pdfs.length > 0 && (
+          <div style={styles.pdfLibrary}>
+            <div style={styles.libraryLabel}>📚 Your PDFs ({pdfs.length})</div>
+            {pdfs.map((pdf) => (
+              <div
+                key={pdf}
+                style={styles.pdfItem(pdf === activePdf)}
+                onClick={() => selectPdf(pdf)}
+              >
+                <span style={{ fontSize: 14 }}>📄</span>
+                <span style={styles.pdfName}>{pdf}</span>
+                {pdf === activePdf && <span style={styles.activeTag}>active</span>}
+              </div>
+            ))}
+          </div>
+        )}
 
         <div style={styles.features}>
           <div style={styles.feature}>🔍 Semantic PDF search</div>
@@ -135,25 +177,21 @@ export default function App() {
           <div style={styles.feature}>⚡ Powered by LLaMA 3.3</div>
         </div>
 
-        <div style={styles.sidebarFooter}>
-          Built by Aniket Jaiswal
-        </div>
+        <div style={styles.sidebarFooter}>Built by Aniket Jaiswal</div>
       </div>
 
-      {/* ── Chat Area ── */}
+      {/* Chat */}
       <div style={styles.chat}>
-        {/* Header */}
         <div style={styles.header}>
           <div>
             <div style={styles.headerTitle}>ResearchMind</div>
             <div style={styles.headerSub}>
-              {pdfLoaded ? "📄 PDF loaded — ready to answer" : "No PDF loaded — web search available"}
+              {activePdf ? `📄 ${activePdf} — active` : "No PDF loaded — web search available"}
             </div>
           </div>
-          <div style={styles.statusDot(pdfLoaded)} />
+          <div style={styles.statusDot(!!activePdf)} />
         </div>
 
-        {/* Messages */}
         <div style={styles.messages}>
           {messages.map((msg, i) => (
             <div key={i} style={styles.msgRow(msg.role)}>
@@ -161,7 +199,17 @@ export default function App() {
                 {msg.role === "assistant" ? "🔬" : "👤"}
               </div>
               <div style={styles.bubble(msg.role)}>
-                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                <ReactMarkdown
+                  components={{
+                   a: ({node, ...props}) => (
+                     <a {...props} target="_blank" rel="noopener noreferrer" style={{color: "#a5b4fc", textDecoration: "underline"}}>
+                      {props.children}
+                     </a>
+                    )
+                  }}
+                >
+                  {msg.content}
+                </ReactMarkdown>
               </div>
             </div>
           ))}
@@ -181,7 +229,6 @@ export default function App() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
         <div style={styles.inputArea}>
           <textarea
             style={styles.textarea}
@@ -205,7 +252,6 @@ export default function App() {
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────
 const styles = {
   root: {
     display: "flex",
@@ -223,13 +269,10 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     padding: "24px 20px",
-    gap: 20,
+    gap: 16,
+    overflowY: "auto",
   },
-  logo: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-  },
+  logo: { display: "flex", alignItems: "center", gap: 10 },
   logoIcon: { fontSize: 28 },
   logoText: {
     fontSize: 20,
@@ -238,37 +281,21 @@ const styles = {
     WebkitBackgroundClip: "text",
     WebkitTextFillColor: "transparent",
   },
-  sidebarDesc: {
-    fontSize: 13,
-    color: "#6b7280",
-    lineHeight: 1.6,
-    margin: 0,
-  },
+  sidebarDesc: { fontSize: 13, color: "#6b7280", lineHeight: 1.6, margin: 0 },
   uploadBox: {
     border: "1.5px dashed #2d3748",
     borderRadius: 12,
-    padding: "20px 16px",
+    padding: "16px",
     cursor: "pointer",
-    transition: "border-color 0.2s",
-    "&:hover": { borderColor: "#6366f1" },
   },
   uploadInner: {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
   },
-  uploadText: {
-    fontSize: 13,
-    fontWeight: 500,
-    color: "#c4b5fd",
-    textAlign: "center",
-  },
-  uploadSub: {
-    fontSize: 11,
-    color: "#4b5563",
-    textAlign: "center",
-  },
+  uploadText: { fontSize: 13, fontWeight: 500, color: "#c4b5fd", textAlign: "center" },
+  uploadSub: { fontSize: 11, color: "#4b5563", textAlign: "center" },
   spinner: {
     width: 24,
     height: 24,
@@ -277,31 +304,48 @@ const styles = {
     borderRadius: "50%",
     animation: "spin 0.8s linear infinite",
   },
-  features: {
+  pdfLibrary: {
     display: "flex",
     flexDirection: "column",
-    gap: 10,
-    marginTop: 8,
+    gap: 6,
   },
-  feature: {
-    fontSize: 12,
+  libraryLabel: {
+    fontSize: 11,
+    fontWeight: 600,
     color: "#6b7280",
+    letterSpacing: "0.05em",
+    marginBottom: 4,
+  },
+  pdfItem: (active) => ({
     display: "flex",
     alignItems: "center",
     gap: 8,
-  },
-  sidebarFooter: {
-    marginTop: "auto",
-    fontSize: 11,
-    color: "#374151",
-    textAlign: "center",
-  },
-  chat: {
+    padding: "8px 10px",
+    borderRadius: 8,
+    cursor: "pointer",
+    background: active ? "#1e2d45" : "transparent",
+    border: active ? "1px solid #3b4fd8" : "1px solid transparent",
+    transition: "all 0.15s",
+  }),
+  pdfName: {
+    fontSize: 12,
+    color: "#c4b5fd",
     flex: 1,
-    display: "flex",
-    flexDirection: "column",
     overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
+  activeTag: {
+    fontSize: 10,
+    background: "#312e81",
+    color: "#a5b4fc",
+    padding: "2px 6px",
+    borderRadius: 4,
+  },
+  features: { display: "flex", flexDirection: "column", gap: 8 },
+  feature: { fontSize: 12, color: "#6b7280" },
+  sidebarFooter: { marginTop: "auto", fontSize: 11, color: "#374151", textAlign: "center" },
+  chat: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" },
   header: {
     padding: "16px 24px",
     borderBottom: "1px solid #1e2535",
@@ -310,15 +354,8 @@ const styles = {
     alignItems: "center",
     background: "#161b27",
   },
-  headerTitle: {
-    fontWeight: 600,
-    fontSize: 16,
-  },
-  headerSub: {
-    fontSize: 12,
-    color: "#6b7280",
-    marginTop: 2,
-  },
+  headerTitle: { fontWeight: 600, fontSize: 16 },
+  headerSub: { fontSize: 12, color: "#6b7280", marginTop: 2 },
   statusDot: (active) => ({
     width: 10,
     height: 10,
@@ -361,12 +398,7 @@ const styles = {
     lineHeight: 1.7,
     color: "#e8eaf6",
   }),
-  typing: {
-    display: "flex",
-    gap: 4,
-    alignItems: "center",
-    padding: "4px 0",
-  },
+  typing: { display: "flex", gap: 4, alignItems: "center", padding: "4px 0" },
   dot: (i) => ({
     width: 7,
     height: 7,
@@ -403,13 +435,6 @@ const styles = {
     fontSize: 14,
     fontWeight: 600,
     cursor: disabled ? "not-allowed" : "pointer",
-    transition: "all 0.2s",
-    whiteSpace: "nowrap",
   }),
-  inputHint: {
-    fontSize: 11,
-    color: "#374151",
-    textAlign: "center",
-    paddingBottom: 12,
-  },
+  inputHint: { fontSize: 11, color: "#374151", textAlign: "center", paddingBottom: 12 },
 };
