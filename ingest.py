@@ -20,10 +20,7 @@ def ingest_pdf(pdf_path: str):
     doc = fitz.open(pdf_path)
     chunks = []
 
-    max_pages = 50  # limit to 50 pages for free tier RAM
     for page_num, page in enumerate(doc):
-        if page_num >= max_pages:
-            break
         text = page.get_text()
         if not text.strip():
             continue
