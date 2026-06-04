@@ -26,8 +26,10 @@ STRICT RULES — ALWAYS FOLLOW:
 - If PDF doesn't have the answer, use web_search_tool
 - FAISS search works by topic/meaning, NOT by page numbers
 - Never call the same tool twice with identical input
-- Format web sources as markdown links like [Source Title](url)
-- Format PDF sources as: (Source: filename, Page X)"""
+- ALWAYS end your answer with sources in this exact format:
+  For PDF: (Source: filename, Page X)
+  For Web: [Title](url)
+- If no sources found, say so explicitly"""
 
 # ── Agent loop ────────────────────────────────────────────────────────
 def chat(question: str) -> str:
