@@ -1,14 +1,14 @@
 import faiss
 import pickle
 import numpy as np
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 from langchain.tools import tool
 from langchain_community.tools.tavily_search import TavilySearchResults
 from dotenv import load_dotenv
 
 load_dotenv()
 
-model = SentenceTransformer("all-MiniLM-L6-v2")
+model = TextEmbedding("BAAI/bge-small-en-v1.5")
 
 # ── Active PDF tracker ────────────────────────────────────────────────
 # This keeps track of which PDF is currently selected
@@ -50,7 +50,7 @@ def pdf_search_tool(query: str) -> str:
     try:
         index, chunks = load_vector_store()
 
-        query_vector = model.encode([query])
+        query_vector = list(model.embed([query]))
         query_vector = np.array(query_vector, dtype=np.float32)
 
         distances, indices = index.search(query_vector, k=4)

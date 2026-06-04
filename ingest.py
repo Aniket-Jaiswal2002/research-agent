@@ -1,12 +1,12 @@
 import fitz
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 import faiss
 import numpy as np
 import pickle
 import os
 import re
 
-model = SentenceTransformer("all-MiniLM-L6-v2")
+model = TextEmbedding("BAAI/bge-small-en-v1.5")
 
 def clean_name(filename: str) -> str:
     """Convert filename to a clean folder name"""
@@ -38,7 +38,9 @@ def ingest_pdf(pdf_path: str):
 
     print("Converting chunks to vectors...")
     texts = [chunk["text"] for chunk in chunks]
-    vectors = model.encode(texts, show_progress_bar=True)
+    vectors = list(model.embed(texts))
+    import numpy as np
+    vectors = np.array(vectors) 
 
     dimension = vectors.shape[1]
     index = faiss.IndexFlatL2(dimension)

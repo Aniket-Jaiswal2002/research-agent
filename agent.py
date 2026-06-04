@@ -8,7 +8,7 @@ load_dotenv()
 
 # ── Create the LLM with tools bound to it ────────────────────────────
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
+    model="llama-3.1-8b-instant",
     temperature=0
 )
 
@@ -102,4 +102,4 @@ if __name__ == "__main__":
             continue
         answer = chat(question)
         print(f"\nResearchMind: {answer}\n")
-        
+          
