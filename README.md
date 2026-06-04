@@ -1,134 +1,190 @@
 # 🔬 ResearchMind — AI Research Agent
 
-An intelligent research assistant that lets you chat with your PDF documents and search the web — powered by LLaMA 3.3 and LangChain.
+> An intelligent research assistant that chats with your PDFs and searches the web — built with LangChain agents, FAISS vector search, and LLaMA 3.
 
-![ResearchMind](https://img.shields.io/badge/AI-LLaMA%203.3-purple) ![FastAPI](https://img.shields.io/badge/Backend-FastAPI-green) ![React](https://img.shields.io/badge/Frontend-React-blue) ![Docker](https://img.shields.io/badge/Deploy-Docker-blue)
+![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)
+![FastAPI](https://img.shields.io/badge/FastAPI-green?logo=fastapi)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker)
+![LangChain](https://img.shields.io/badge/LangChain-Agent-purple)
+![License](https://img.shields.io/badge/License-MIT-yellow)
+
+---
+
+## 🌐 Live Demo
+
+| | Link |
+|---|---|
+| 🖥️ **Frontend** | https://researchmind-sigma.vercel.app |
+| ⚙️ **API Docs** | https://research-agent-production-3bc9.up.railway.app/docs |
+
+> **Note:** Live demo supports web search. For full PDF functionality run locally with Docker. PDF processing requires 1GB+ RAM server.
+
+---
+
+## 📸 Demo
+
+### Local — Full PDF + Web Search
+![Local Demo](assets/demo-local.gif)
+
+### Live — Web Search with Citations
+![Live Demo](assets/demo-live.gif)
+
+---
 
 ## ✨ Features
 
-- 📄 **PDF Chat** — Upload any PDF and ask questions about it
-- 🌐 **Web Search** — Searches the internet for latest information
+- 📄 **PDF Chat** — Upload any PDF and ask questions with page citations
+- 🌐 **Web Search** — Real-time web search with clickable sources
 - 📌 **Cited Answers** — Every answer includes page numbers and URLs
 - 📚 **Multiple PDFs** — Upload and switch between multiple documents
 - ⚡ **Fast** — Powered by Groq's LPU inference engine
 - 🐳 **Docker Ready** — One command to run everything
 
+---
+
+## 🧠 How the Agent Works
+
+```
+User asks: "What is electrochemistry and latest battery tech?"
+↓
+LLM decides which tools to use
+↓
+┌───────────────────────────────┐
+│                               │
+pdf_search_tool              web_search_tool
+(FAISS vector search)        (Tavily API)
+→ Page 67, NCERT Chemistry   → Forbes, Nature 2025
+│                               │
+└───────────────┬───────────────┘
+↓
+LLM combines results + adds citations
+↓
+"Electrochemistry is... (Source: NCERT, Page 67)
+Latest developments... (Forbes)"
+```
+
+---
+
 ## 🛠️ Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| LLM | LLaMA 3.3 70B via Groq |
-| Agent Framework | LangChain |
-| Vector Search | FAISS |
-| Embeddings | Sentence Transformers |
-| Web Search | Tavily API |
-| Backend | FastAPI |
-| Frontend | React + Vite |
-| Deployment | Docker + Render |
+```
+| Layer | Technology | Why |
+|-------|-----------|-----|
+| **LLM** | LLaMA 3.1 8B via Groq | Fast, free, powerful |
+| **Agent** | LangChain tool-calling | Decides PDF vs web automatically |
+| **Embeddings** | FastEmbed (BAAI/bge-small) | Lightweight, no GPU needed |
+| **Vector DB** | FAISS | Fast local semantic search |
+| **Web Search** | Tavily API | Purpose-built for AI agents |
+| **Backend** | FastAPI + Uvicorn | Fast async Python API |
+| **Frontend** | React + Vite | Modern, fast UI |
+| **Container** | Docker + Docker Compose | One-command deployment |
+| **Hosting** | Railway + Vercel | Backend + Frontend split |
+```
 
-## 🚀 Getting Started
+---
 
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- Groq API key (free at console.groq.com)
-- Tavily API key (free at app.tavily.com)
+## 🚀 Quick Start
 
-### Installation
+### Option 1 — Docker (Recommended)
 
-1. **Clone the repo**
 ```bash
 git clone https://github.com/Aniket-Jaiswal2002/research-agent.git
 cd research-agent
-```
-
-2. **Create virtual environment**
-```bash
-python -m venv venv
-venv\Scripts\activate  # Windows
-source venv/bin/activate  # Mac/Linux
-```
-
-3. **Install dependencies**
-```bash
-pip install -r requirements.txt
-```
-
-4. **Set up environment variables**
-```bash
 cp .env.example .env
 # Add your API keys to .env
-```
-
-5. **Run with Docker**
-```bash
 docker-compose up
 ```
 
-6. **Or run manually**
+Open **http://localhost:5173** 🎉
 
-Terminal 1 — Backend:
+### Option 2 — Manual
+
+**Backend:**
 ```bash
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
 uvicorn api:app --reload
 ```
 
-Terminal 2 — Frontend:
+**Frontend:**
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-## 📖 How It Works
-
-User uploads PDF
-↓
-pymupdf reads pages → split into chunks
-↓
-sentence-transformers converts chunks to vectors
-↓
-FAISS stores vectors for fast search
-↓
-User asks question
-↓
-Agent decides: search PDF or web?
-↓
-FAISS finds relevant chunks / Tavily searches web
-↓
-LLaMA 3.3 generates cited answer
-↓
-React displays answer with clickable sources
+---
 
 ## 🔑 Environment Variables
 
-Create a `.env` file with:
-```bash
-GROQ_API_KEY=your_groq_key_here
-TAVILY_API_KEY=your_tavily_key_here
+```env
+GROQ_API_KEY=your_groq_key_here      # Free at console.groq.com
+TAVILY_API_KEY=your_tavily_key_here  # Free at app.tavily.com
 ```
+
+---
+
+## 📡 API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/` | Health check |
+| `POST` | `/upload` | Upload and ingest a PDF |
+| `POST` | `/ask` | Ask the AI agent |
+| `POST` | `/select-pdf` | Switch active PDF |
+| `GET` | `/pdfs` | List all PDFs |
+| `GET` | `/status` | System status |
+
+---
+
 ## 📁 Project Structure
 
-```bash
-research-agent/
-├── ingest.py          # PDF processing pipeline
-├── tools.py           # Agent tools (PDF + web search)
-├── agent.py           # AI agent brain
-├── api.py             # FastAPI backend
-├── Dockerfile         # Backend container
-├── docker-compose.yml # Run everything together
-├── requirements.txt   # Python dependencies
-└── frontend/
-├── src/
-│   └── App.jsx    # React UI
-└── Dockerfile     # Frontend container
 ```
+research-agent/
+├── ingest.py          # PDF → chunks → vectors → FAISS
+├── tools.py           # pdf_search_tool + web_search_tool
+├── agent.py           # LangChain agent brain
+├── api.py             # FastAPI REST endpoints
+├── Dockerfile         # Backend container
+├── docker-compose.yml # Full stack orchestration
+├── requirements.txt   # Python dependencies
+├── assets/            # Demo GIFs
+└── frontend/
+├── src/App.jsx    # React chat UI
+└── Dockerfile     # Nginx container
+```
+
+---
+
+## 🗺️ Roadmap
+
+- [x] PDF ingestion with FAISS
+- [x] LangChain agent with tool calling
+- [x] Web search with Tavily
+- [x] FastAPI REST backend
+- [x] React chat UI with citations
+- [x] Multiple PDF support
+- [x] Docker deployment
+- [x] Live deployment (Railway + Vercel)
+- [ ] User authentication
+- [ ] Persistent PDF library per user
+- [ ] Streaming responses
+- [ ] Mobile app
+
+---
 
 ## 👨‍💻 Author
 
-**Aniket Jaiswal**
-- GitHub: [@Aniket-Jaiswal2002](https://github.com/Aniket-Jaiswal2002)
-- LinkedIn: [Aniket Jaiswal](https://www.linkedin.com/in/aniket-jaiswal-6748a5248/)
+**Aniket Jaiswal** — AI Engineer
+
+- 🐙 GitHub: [@Aniket-Jaiswal2002](https://github.com/Aniket-Jaiswal2002)
+- 💼 LinkedIn: [Aniket Jaiswal](https://www.linkedin.com/in/aniket-jaiswal-6748a5248/)
+- 📧 Open to international AI engineer opportunities
+
+---
 
 ## 📄 License
 
-MIT License
+MIT License — feel free to use as a template!
