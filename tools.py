@@ -53,7 +53,7 @@ def pdf_search_tool(query: str) -> str:
         query_vector = list(model.embed([query]))
         query_vector = np.array(query_vector, dtype=np.float32)
 
-        distances, indices = index.search(query_vector, k=4)
+        distances, indices = index.search(query_vector, k=2)
 
         results = []
         for i, idx in enumerate(indices[0]):
@@ -76,7 +76,7 @@ def pdf_search_tool(query: str) -> str:
 
 
 web_search_tool = TavilySearchResults(
-    max_results=3,
+    max_results=2,
     include_answer=True,
     include_raw_content=False,
     name="web_search_tool",
