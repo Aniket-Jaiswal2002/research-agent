@@ -42,9 +42,16 @@ def root():
     return {"status": "ResearchMind API v2 is running!"}
 
 
+@app.on_event("startup")
+async def startup_event():
+    pdfs = list_pdfs()
+    if pdfs:
+        set_active_pdf(pdfs[0])
+        print(f"Auto-loaded PDF: {pdfs[0]}")
+
+
 @app.post("/upload", response_model=UploadResponse)
 async def upload_pdf(file: UploadFile = File(...)):
-    """Upload and ingest a PDF file"""
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
@@ -55,10 +62,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     try:
         chunks, pdf_name = ingest_pdf(upload_path)
         os.remove(upload_path)
-
-        # auto select the newly uploaded PDF
         set_active_pdf(pdf_name)
-
         return UploadResponse(
             message=f"Successfully ingested {file.filename}",
             chunks=chunks,
@@ -73,7 +77,6 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 @app.post("/select-pdf")
 def select_pdf(request: SelectPDFRequest):
-    """Switch the active PDF the agent searches"""
     pdf_path = f"vector_store/{request.pdf_name}"
     if not os.path.exists(pdf_path):
         raise HTTPException(status_code=404, detail="PDF not found")
@@ -83,26 +86,23 @@ def select_pdf(request: SelectPDFRequest):
 
 @app.get("/pdfs")
 def get_pdfs():
-    """Get list of all uploaded PDFs"""
     pdfs = list_pdfs()
     return {"pdfs": pdfs, "count": len(pdfs)}
 
 
 @app.post("/ask", response_model=AnswerResponse)
 async def ask_question(request: QuestionRequest):
-    """Ask a question to the AI agent"""
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
     try:
         answer = chat(request.question)
         return AnswerResponse(answer=answer, success=True)
     except Exception as e:
+        print(f"ERROR in ask_question: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/status")
 def status():
-    """Check system status"""
     pdfs = list_pdfs()
     from tools import active_pdf
     return {
