@@ -1,0 +1,5 @@
+[
+    variables
+]
+NGINX_CLIENT_MAX_BODY_SIZE = "50m"
+
