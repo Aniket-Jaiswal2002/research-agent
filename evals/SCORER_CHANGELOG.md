@@ -54,7 +54,9 @@ After `--rerun-errors`, run `resummarise.py` again so every row uses the same sc
 | `openai/gpt-oss-20b` · v1 · 3-task smoke run | 3 | 66.7% (2/3) | 100% (3/3) | pdf-01 |
 | `openai/gpt-oss-20b` · v1 · full | 31 of 31 | 61.3% (19/31) | **77.4% (24/31)** | pdf-01, pdf-04, pdf-09, multi-02, multi-03 |
 | `openai/gpt-oss-20b` · v2 · full (+ qwen judge) | 29 of 31 (2 API errors) | 69.0% (20/29) | **75.9% (22/29)** | pdf-04, pdf-09 |
-| `openai/gpt-oss-120b` · v2 | not finished | – | – | run stopped at 22/31 on an API error; not re-scored |
+| `openai/gpt-oss-120b` · v2 · full (+ qwen judge) | 31 of 31 (`web-04`: 1 model error, counted as FAIL) | 77.4% (24/31)* | **87.1% (27/31)** | pdf-04, pdf-09, multi-02 |
+
+\* The LARGE run was interrupted at 22/31 and finished with `--resume` after the scorer fix, so its "before" mixes 22 rows scored by version 1 with 9 scored by version 2. The "after" re-scores every row with version 2.
 
 Every change is FAIL → PASS; no task got worse.
 
