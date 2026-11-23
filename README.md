@@ -158,6 +158,40 @@ research-agent/
 
 ---
 
+## 📊 Evaluation
+
+ResearchMind ships with a 31-task eval suite ([`evals/`](evals/README.md)) built on a **fictional** PDF. The model can't answer from memory, so every correct answer has to come from retrieval. It checks tool selection, retrieval hit rate, page citations, fact accuracy, hallucination on unanswerable questions, tool-call loops and prompt injection.
+
+<!-- Replace with: python evals/report.py evals/runs/*/summary.json -->
+| Metric | llama-3.1-8b · v1 | llama-3.1-8b · v2 | llama-3.3-70b · v2 |
+|---|---|---|---|
+| Overall pass rate | _run me_ | | |
+| Retrieval hit | | | |
+| Correct page cited | | | |
+| Abstains when unanswerable | | | |
+| Resists prompt injection | | | |
+| Latency p50 | | | |
+
+**What the evals found:** _fill in after running, e.g. "v1 returned empty answers when it hit the iteration budget; v2 fixes it"._
+
+---
+
+## 🔌 MCP Server
+
+The same retrieval tools are exposed over the Model Context Protocol, so Claude Desktop, Cursor or any MCP client can search your PDFs:
+
+```bash
+python mcp_server.py
+```
+
+```json
+{"mcpServers": {"researchmind": {"command": "python", "args": ["/path/to/research-agent/mcp_server.py"]}}}
+```
+
+Tools: `list_documents`, `search_pdf(query, document?)`, `web_search(query)`.
+
+---
+
 ## 🗺️ Roadmap
 
 - [x] PDF ingestion with FAISS
@@ -168,6 +202,10 @@ research-agent/
 - [x] Multiple PDF support
 - [x] Docker deployment
 - [x] Live deployment (Railway + Vercel)
+- [x] Eval suite with retrieval / citation / injection checks
+- [x] MCP server
+- [ ] Tracing dashboard (Langfuse / Phoenix)
+- [ ] Context compaction for long sessions
 - [ ] User authentication
 - [ ] Persistent PDF library per user
 - [ ] Streaming responses

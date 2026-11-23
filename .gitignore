@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 vector_store/
 *.pdf
+# eval fixture is generated but committed so results are reproducible
+!evals/fixtures/*.pdf
