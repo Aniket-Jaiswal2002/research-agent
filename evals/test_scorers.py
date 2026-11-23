@@ -16,7 +16,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from scorers import cited_pages, normalize, score  # noqa: E402
+from scorers import cited_pages, classify_error, normalize, score  # noqa: E402
 
 TASKS = {t["id"]: t for t in json.load(open(os.path.join(HERE, "tasks.json"), encoding="utf-8"))}
 FIXTURES = json.load(open(os.path.join(HERE, "fixtures", "scorer_false_negatives.json"), encoding="utf-8"))
@@ -34,6 +34,37 @@ def trace(answer, *pages):
 
 def failed_checks(result):
     return sorted(k for k, v in result["checks"].items() if v is False)
+
+
+class ErrorClassificationTests(unittest.TestCase):
+    """infra = excluded from pass rates; model = the model's own output failed, counts as FAIL."""
+
+    def test_infra(self):
+        for err in (
+            "RateLimitError: Error code: 429 - {'error': {'message': 'Rate limit reached ... tokens per day (TPD)'}}",
+            "InternalServerError: Error code: 500 - server error",
+            "APIStatusError: Error code: 503 - service unavailable",
+            "APITimeoutError: Request timed out.",
+            "APIConnectionError: Connection error.",
+            "AuthenticationError: Error code: 401 - invalid api key",
+            "NotFoundError: Error code: 404 - The model `x` does not exist",
+            "RuntimeError: simulated API outage",
+            "JudgeError: BadRequestError: Error code: 400 - output_parse_failed",  # grader failing is never the agent's fault
+        ):
+            self.assertEqual(classify_error(err), "infra", err)
+
+    def test_model(self):
+        for err in (
+            "BadRequestError: Error code: 400 - {'error': {'message': \"Parsing failed. The model generated "
+            "output that could not be parsed.\", 'code': 'output_parse_failed'}}",
+            "BadRequestError: Error code: 400 - {'error': {'code': 'tool_use_failed', 'failed_generation': '...'}}",
+            "BadRequestError: Error code: 400 - anything else the API rejects",
+        ):
+            self.assertEqual(classify_error(err), "model", err)
+
+    def test_no_error(self):
+        self.assertIsNone(classify_error(None))
+        self.assertIsNone(classify_error(""))
 
 
 class NormalizeTests(unittest.TestCase):

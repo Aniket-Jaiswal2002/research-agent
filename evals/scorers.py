@@ -70,6 +70,23 @@ def retrieved_pages(trace: dict) -> set:
     return pages
 
 
+# Errors come stored as "<ExceptionType>: <message>" (see run_evals.evaluate_task).
+# model = the model's own output was rejected (HTTP 400: output_parse_failed, tool_use_failed, ...).
+#         The agent failed the task, so it counts as a FAIL.
+# infra = everything else (429, 5xx, timeouts, connection errors, auth, unknown model, judge failures).
+#         Says nothing about the agent, so the task is excluded from pass rates.
+_MODEL_ERR_RE = re.compile(r"BadRequestError|Error code: 400|output_parse_failed|tool_use_failed|failed_generation", re.I)
+
+
+def classify_error(err):
+    """None if there was no error, else "model" or "infra"."""
+    if not err:
+        return None
+    if err.startswith("JudgeError"):
+        return "infra"  # the grader failing is not the agent's fault
+    return "model" if _MODEL_ERR_RE.search(err) else "infra"
+
+
 def score(task: dict, trace: dict) -> dict:
     e = task["expect"]
     ans = normalize(trace["answer"] or "")

@@ -23,7 +23,7 @@ TASKS_PATH = os.path.join(run_evals.EVALS, "tasks.json")
 def rescore_run(run_dir, tasks_path=TASKS_PATH):
     run_dir = os.path.abspath(os.path.join(START_CWD, run_dir))
     old = json.load(open(os.path.join(run_dir, "summary.json"), encoding="utf-8"))
-    meta = {k: old[k] for k in ("run_id", "model", "agent_version", "judge")}
+    meta = run_evals.load_run_meta(run_dir)
     meta["scorer_version"] = SCORER_VERSION
     tasks = {t["id"]: t for t in json.load(open(tasks_path, encoding="utf-8"))}
 
@@ -31,8 +31,9 @@ def rescore_run(run_dir, tasks_path=TASKS_PATH):
     records = [json.loads(line) for line in open(trace_path, encoding="utf-8")]
     changed = []
     for rec in records:
-        if rec.get("error"):
-            continue  # nothing to score: the API call failed
+        if run_evals.error_class(rec) == "infra":
+            continue  # nothing to score: an outage, excluded from rates
+        # model errors ARE scored: their empty trace fails the checks, so they count as failures
         was = deterministic_pass(rec)
         result = score(tasks[rec["id"]], rec["trace"])
         judge = rec["trace"].get("judge")
@@ -59,6 +60,7 @@ def rescore_run(run_dir, tasks_path=TASKS_PATH):
     before = old.get("pass_rate_deterministic", old["pass_rate"])  # 3-task smoke run predates the new key
     return {"run_id": meta["run_id"], "before": before, "after": summary["pass_rate_deterministic"],
             "n_scored": summary["n_tasks"], "n_total": summary["n_total"], "errors": summary["errors"],
+            "model_errors": summary["model_errors"],
             "changed": changed, "judged": summary["judged"],
             "pass_incl_judge": summary["pass_rate"] if summary["judged"] else None}
 
@@ -68,4 +70,5 @@ if __name__ == "__main__":
         r = rescore_run(d)
         flips = ", ".join(f"{i} {c}" for i, c in r["changed"]) or "none"
         print(f"{r['run_id']}: deterministic {r['before']:.1%} -> {r['after']:.1%} "
-              f"({r['n_scored']} scored of {r['n_total']}, {r['errors']} errored) | changed: {flips}")
+              f"({r['n_scored']} scored of {r['n_total']}; infra errors {r['errors']} excluded, "
+              f"model errors {r['model_errors']} counted) | changed: {flips}")

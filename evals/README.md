@@ -76,8 +76,20 @@ Judge model differs from the model under test to avoid self-preference bias.
 
 31 tasks; each task ≈ 3 points. Differences under ~10 points are within run-to-run variance.
 
-Tasks that end in an API error (e.g. a Groq daily-token 429) are excluded from every pass rate and listed as "errors: N (excluded)". Once the quota frees up, re-run only those tasks in place:
+Tasks that end in an API error are split into two classes and reported separately:
+
+- **Infra errors** (429, 5xx, timeouts, connection errors, auth, unknown model, judge failures) say nothing about the agent. They are **excluded** from every pass rate and listed as "Infra errors (excluded)".
+- **Model errors** (HTTP 400 caused by the model's own output, e.g. `output_parse_failed`, `tool_use_failed`) are agent failures. They **count as FAIL** and are listed as "Model errors (counted as fail)".
 
 ```bash
+# stop at the first infra error instead of burning through the rest of the quota
+python evals/run_evals.py --model openai/gpt-oss-20b --agent-version v2 --stop-on-infra-error
+
+# later: run only the tasks that never ran (same model/version/judge as the original)
+python evals/run_evals.py --resume evals/runs/<run_dir> --stop-on-infra-error
+
+# re-run only the infra-errored tasks in place (model errors are never re-run)
 python evals/run_evals.py --rerun-errors evals/runs/<run_dir>
 ```
+
+Every run writes `meta.json` when it starts, so `--resume` works even if the process was killed. For a run that has none, pass `--model`, `--agent-version` (and `--judge --judge-model`); they must match the run folder name and the saved rows.

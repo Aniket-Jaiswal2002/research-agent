@@ -32,7 +32,8 @@ def main(paths):
     row("Avg tool calls", lambda r: f"{r['avg_tool_calls']:.2f}")
     row("Avg tokens / task", lambda r: f"{r['avg_tokens']:.0f}")
     row("Tasks scored", lambda r: f"{r['n_tasks']} of {r.get('n_total', r['n_tasks'])}")
-    row("API errors (excluded)", lambda r: (f"{r['errors']}: " + ", ".join(r.get("errored_ids", []))) if r.get("errors") else "0")
+    row("Infra errors (excluded)", lambda r: (f"{r['errors']}: " + ", ".join(r.get("errored_ids", []))) if r.get("errors") else "0")
+    row("Model errors (counted as fail)", lambda r: (f"{r['model_errors']}: " + ", ".join(r.get("model_error_ids", []))) if r.get("model_errors") else "0")
     print("\n".join(L))
 
 
