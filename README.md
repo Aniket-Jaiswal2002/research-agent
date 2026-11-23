@@ -162,17 +162,26 @@ research-agent/
 
 ResearchMind ships with a 31-task eval suite ([`evals/`](evals/README.md)) built on a **fictional** PDF. The model can't answer from memory, so every correct answer has to come from retrieval. It checks tool selection, retrieval hit rate, page citations, fact accuracy, hallucination on unanswerable questions, tool-call loops and prompt injection.
 
-<!-- Replace with: python evals/report.py evals/runs/*/summary.json -->
-| Metric | llama-3.1-8b · v1 | llama-3.1-8b · v2 | llama-3.3-70b · v2 |
+<!-- Numbers come from evals/RESULTS.md (python evals/report.py evals/runs/*/summary.json) -->
+| Metric | gpt-oss-20b · v1 | gpt-oss-20b · v2 | gpt-oss-120b · v2 |
 |---|---|---|---|
-| Overall pass rate | _run me_ | | |
-| Retrieval hit | | | |
-| Correct page cited | | | |
-| Abstains when unanswerable | | | |
-| Resists prompt injection | | | |
-| Latency p50 | | | |
+| **Pass rate (deterministic)** | **77%** (24/31) | **76%** (22/29) | **87%** (27/31) |
+| Pass rate incl. LLM judge | – | 69% | 81% |
+| Groundedness (judge: qwen3.8-27b) | – | 88% | 93% |
+| Retrieval hit | 100% | 89% | 100% |
+| Correct page cited | 100% | 84% | 95% |
+| Abstains when unanswerable | 0% | 67% | 100% |
+| Resists prompt injection | 100% | – | 100% |
+| Latency p50 / p95 | 14.2s / 51.8s | 12.9s / 78.1s | 2.5s / 103.1s |
 
-**What the evals found:** _fill in after running, e.g. "v1 returned empty answers when it hit the iteration budget; v2 fixes it"._
+31 tasks; each task ≈ 3 points, so differences under ~10 points are within run-to-run variance. "–": not measured (v2's two injection tasks hit Groq's daily token limit and are excluded, as all API outages are; the 120b run had one model error, `web-04`, which counts as a failure). Both models are on Groq; the judge is a different model from the one under test. Details: [`evals/RESULTS.md`](evals/RESULTS.md), [`evals/SCORER_CHANGELOG.md`](evals/SCORER_CHANGELOG.md).
+
+**What the evals found:**
+- **v1 returned empty answers** when it used up its 6 tool rounds (abstention 0%, completion 90%). v2 fixes that: abstention 67% and no empty answers (completion 100%). It does not stop loops: `loop-01` ("tell me everything") still blows the tool-call budget in every run.
+- **v1 and v2 are not distinguishable overall** (77% vs 76%): v2 won two unanswerable-question tasks and lost two on tool choice and citation format, which looks like run-to-run variance. Repeating each run a few times would settle it.
+- **The first scorer was too strict.** It rejected correct answers written with a non-breaking hyphen (`LPSC‑9`), `kg⁻¹` instead of `kg/`, or "Page 3 & 6". Fixing that moved v1 from 61% to 77%; the before/after for every run is in the changelog.
+- **The remaining misses are behavioural, not retrieval:** retrieval hit is 89–100%. The common failures are calling the web tool before the PDF, dropping URLs from web citations, and looping on "tell me everything".
+- **The bigger model scores higher** (87%) and abstains correctly every time, but produced one malformed tool call that Groq rejected (`output_parse_failed`).
 
 ---
 
