@@ -65,6 +65,11 @@ def deterministic_pass(row):
 
 
 def summarise(rows, meta):
+    # Tasks that ended in an API error (rate limit, outage) say nothing about the agent,
+    # so they are excluded from every rate and listed separately.
+    errored = [r for r in rows if r.get("error")]
+    n_total = len(rows)
+    rows = [r for r in rows if not r.get("error")]
     by_cat = defaultdict(list)
     for r in rows:
         by_cat[r["category"]].append(deterministic_pass(r))
@@ -77,7 +82,8 @@ def summarise(rows, meta):
     lat = [r["latency_s"] for r in rows]
     return {
         **meta,
-        "n_tasks": len(rows),
+        "n_tasks": len(rows),          # scored tasks only (errored ones excluded)
+        "n_total": n_total,
         # deterministic = every check except the judge's 'grounded'; used to compare v1 vs v2
         "pass_rate_deterministic": sum(deterministic_pass(r) for r in rows) / max(1, len(rows)),
         # incl. judge = deterministic AND grounded; only meaningful when the run had a judge
@@ -89,7 +95,8 @@ def summarise(rows, meta):
         "latency_p95_s": pct(lat, 0.95),
         "avg_tool_calls": statistics.mean(r["n_tool_calls"] for r in rows) if rows else 0,
         "avg_tokens": statistics.mean(r["tokens"]["input"] + r["tokens"]["output"] for r in rows) if rows else 0,
-        "errors": sum(1 for r in rows if r.get("error")),
+        "errors": len(errored),
+        "errored_ids": [r["id"] for r in errored],
         "failed_ids": [r["id"] for r in rows if not deterministic_pass(r)],
         "failed_ids_incl_judge": [r["id"] for r in rows if not r["passed"]],
     }
@@ -99,7 +106,7 @@ def write_report(summary, rows, path):
     s = summary
     incl_judge = f"{s['pass_rate']:.0%}" if s.get("judged") else "–"
     L = [f"# ResearchMind eval — `{s['model']}` / agent `{s['agent_version']}`", "",
-         f"Run `{s['run_id']}` · {s['n_tasks']} tasks", "",
+         f"Run `{s['run_id']}` · {s['n_tasks']} scored tasks of {s['n_total']}", "",
          "| Metric | Value |", "|---|---|",
          f"| **Pass rate (deterministic)** | **{s['pass_rate_deterministic']:.0%}** |",
          f"| Pass rate (incl. judge) | {incl_judge} |",
@@ -107,14 +114,14 @@ def write_report(summary, rows, path):
          f"| Latency p50 / p95 | {s['latency_p50_s']:.1f}s / {s['latency_p95_s']:.1f}s |",
          f"| Avg tool calls | {s['avg_tool_calls']:.2f} |",
          f"| Avg tokens / task | {s['avg_tokens']:.0f} |",
-         f"| Errors | {s['errors']} |", "",
+         f"| Errors | {s['errors']} (excluded){': ' + ', '.join(s['errored_ids']) if s['errored_ids'] else ''} |", "",
          "## By category", "", "| Category | Pass | n |", "|---|---|---|"]
     L += [f"| {c} | {v['rate']:.0%} | {v['n']} |" for c, v in s["by_category"].items()]
     L += ["", "## By check", "", "| Check | Pass | n |", "|---|---|---|"]
     L += [f"| {c} | {v['rate']:.0%} | {v['n']} |" for c, v in s["checks"].items()]
     L += ["", "## Failures", ""]
     for r in rows:
-        if r["passed"]:
+        if r["passed"] or r.get("error"):
             continue
         bad = [k for k, v in r["checks"].items() if v is False]
         L += [f"### {r['id']} ({r['category']}) — failed: {', '.join(bad) or r.get('error', '?')}",

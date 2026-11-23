@@ -31,7 +31,8 @@ def main(paths):
     row("Latency p50 / p95", lambda r: f"{r['latency_p50_s']:.1f}s / {r['latency_p95_s']:.1f}s")
     row("Avg tool calls", lambda r: f"{r['avg_tool_calls']:.2f}")
     row("Avg tokens / task", lambda r: f"{r['avg_tokens']:.0f}")
-    row("Tasks", lambda r: str(r["n_tasks"]))
+    row("Tasks scored", lambda r: f"{r['n_tasks']} of {r.get('n_total', r['n_tasks'])}")
+    row("API errors (excluded)", lambda r: (f"{r['errors']}: " + ", ".join(r.get("errored_ids", []))) if r.get("errors") else "0")
     print("\n".join(L))
 
 
