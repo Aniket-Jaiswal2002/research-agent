@@ -5,8 +5,36 @@ A task passes when every applicable check is True.
 """
 import json
 import re
+import unicodedata
 
-PAGE_RE = re.compile(r"Page\s*(\d+)", re.I)
+# 1 = original (exact-character matching); 2 = Unicode/unit normalisation + multi-page citation parsing.
+# See evals/SCORER_CHANGELOG.md. Saved in every summary.json; runs without the key were scored with 1.
+SCORER_VERSION = 2
+
+PAGE_RE = re.compile(r"Page\s*(\d+)", re.I)  # kept for backwards compatibility; see cited_pages()
+
+# U+2010..U+2015 (hyphens, non-breaking hyphen, figure dash, en/em dash, bar) and U+2212 (minus)
+_DASHES = {cp: "-" for cp in range(0x2010, 0x2016)}
+_DASHES[0x2212] = "-"
+# "Wh kg-1", "Wh·kg-1" -> "Wh/kg" (after NFKC, "kg⁻¹" has become "kg−1" -> "kg-1")
+_PER_UNIT_RE = re.compile(r"(?<=\w)[\s·⋅]+(kg|mg|g|ml|l|cm|mm|m|s|h)-1(?!\d)", re.I)
+
+_NUM = r"\d{1,3}(?!\d)"
+_RANGE = rf"{_NUM}(?:\s*(?:-|to)\s*{_NUM})?"
+# "Page 3", "Page 3 & 6", "Pages 3 and 6", "Pages 3, 6", "pp. 3-6", "Page 3, Page 6" (the latter via finditer)
+_PAGE_REF_RE = re.compile(
+    rf"\b(?:pages?|pp?\.)\s*(?P<body>{_RANGE}(?:\s*(?:,|;|&|and)\s*{_RANGE}(?!\s*(?!and\b)[A-Za-z%°]))*)", re.I)
+
+
+def normalize(text: str) -> str:
+    """Canonicalise model output before pattern matching.
+
+    NFKC folds compatibility characters (narrow no-break space, superscripts, ligatures);
+    every dash/hyphen/minus variant becomes "-"; per-unit exponents become "/unit".
+    """
+    t = unicodedata.normalize("NFKC", text or "").translate(_DASHES)
+    t = _PER_UNIT_RE.sub(lambda m: "/" + m.group(1), t)
+    return re.sub(r"[ \t]+", " ", t)
 URL_RE = re.compile(r"https?://\S+")
 ABSTAIN_RE = re.compile(
     r"(could ?n[o']t|cannot|can't|unable to|no (relevant )?(information|data|details|mention)"
@@ -18,7 +46,20 @@ ABSTAIN_RE = re.compile(
 
 
 def cited_pages(answer: str) -> set:
-    return {int(p) for p in PAGE_RE.findall(answer or "")}
+    """Page numbers cited in an answer, including lists ("Pages 3, 6", "Page 3 & 6") and ranges ("pp. 3-6")."""
+    pages = set()
+    for m in _PAGE_REF_RE.finditer(normalize(answer)):
+        for part in re.split(r"\s*(?:,|;|&|\band\b)\s*", m.group("body"), flags=re.I):
+            r = re.fullmatch(r"(\d{1,3})(?:\s*(?:-|to)\s*(\d{1,3}))?", part.strip(), re.I)
+            if not r:
+                continue
+            a = int(r.group(1))
+            b = int(r.group(2)) if r.group(2) else a
+            if a <= b and b - a <= 100:
+                pages.update(range(a, b + 1))
+            else:
+                pages.update((a, b))
+    return pages
 
 
 def retrieved_pages(trace: dict) -> set:
@@ -31,7 +72,7 @@ def retrieved_pages(trace: dict) -> set:
 
 def score(task: dict, trace: dict) -> dict:
     e = task["expect"]
-    ans = trace["answer"] or ""
+    ans = normalize(trace["answer"] or "")
     tools = [s["tool"] for s in trace["steps"]]
     c = {}
 
@@ -41,7 +82,7 @@ def score(task: dict, trace: dict) -> dict:
     c["must_not_use"] = not any(t in tools for t in e["must_not_use"]) if "must_not_use" in e else None
     c["no_duplicate_calls"] = not any(s["duplicate"] for s in trace["steps"])
     c["within_tool_budget"] = len(tools) <= e["max_tool_calls"] if "max_tool_calls" in e else None
-    c["cites_source"] = None if e.get("abstain") else bool(PAGE_RE.search(ans) or URL_RE.search(ans))
+    c["cites_source"] = None if e.get("abstain") else bool(cited_pages(ans) or URL_RE.search(ans))
 
     if "pages" in e:
         want, got, ret = set(e["pages"]), cited_pages(ans), retrieved_pages(trace)

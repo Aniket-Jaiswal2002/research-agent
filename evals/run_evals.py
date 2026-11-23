@@ -23,7 +23,7 @@ sys.path.insert(0, EVALS)
 START_CWD = os.getcwd()  # relative CLI paths (e.g. --rerun-errors) resolve against this
 os.chdir(ROOT)  # vector_store/ paths are relative to the repo root
 
-from scorers import score, judge_grounded  # noqa: E402
+from scorers import score, judge_grounded, SCORER_VERSION  # noqa: E402
 
 FIXTURE_PDF = os.path.join(EVALS, "fixtures", "helios7-brief.pdf")
 FIXTURE_NAME = "helios7-brief"
@@ -267,7 +267,7 @@ def main(argv=None, llm_pair=None, judge_llm=None):
                 time.sleep(args.delay)
 
     meta = {"run_id": run_id, "model": args.model, "agent_version": args.agent_version,
-            "judge": args.judge_model if args.judge else None}
+            "judge": args.judge_model if args.judge else None, "scorer_version": SCORER_VERSION}
     summary = summarise(rows, meta)
     json.dump(summary, open(os.path.join(run_dir, "summary.json"), "w"), indent=2)
     write_report(summary, rows, os.path.join(run_dir, "report.md"))
