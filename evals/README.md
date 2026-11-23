@@ -73,3 +73,9 @@ Each run writes `evals/runs/<run>/`:
 On Groq's free tier, keep `--delay 2` (default) or higher. The runner also retries on 429s.
 
 Judge model differs from the model under test to avoid self-preference bias.
+
+Tasks that end in an API error (e.g. a Groq daily-token 429) are excluded from every pass rate and listed as "errors: N (excluded)". Once the quota frees up, re-run only those tasks in place:
+
+```bash
+python evals/run_evals.py --rerun-errors evals/runs/<run_dir>
+```

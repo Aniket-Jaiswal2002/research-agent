@@ -89,6 +89,54 @@ class FakeLLM:
             "input_tokens": 100, "output_tokens": 50, "total_tokens": 150})
 
 
+class FlakyLLM(FakeLLM):
+    """Raises a (non-retried) API error for questions containing any of `bad`."""
+
+    def __init__(self, bad, **kw):
+        super().__init__(**kw)
+        self.bad = bad
+
+    def invoke(self, messages):
+        q = next(m.content for m in messages if isinstance(m, HumanMessage))
+        if any(b in q for b in self.bad):
+            raise RuntimeError("simulated API outage")
+        return super().invoke(messages)
+
+
+def test_rerun_errors():
+    """Errored tasks are excluded from rates, then --rerun-errors fixes only those rows."""
+    import json
+    bad = ["How many cycles does Helios-7 last", "Who is the current CEO of Toyota"]
+    flaky = (FlakyLLM(bad, can_call_tools=False), FlakyLLM(bad))
+    healthy = (FakeLLM(can_call_tools=False), FakeLLM())
+    out = tempfile.mkdtemp()
+
+    s = run_evals.main(["--agent-version", "v1", "--delay", "0", "--out", out], llm_pair=flaky)
+    run_dir = os.path.join(out, s["run_id"])
+    trace_path = os.path.join(run_dir, "traces.jsonl")
+    assert (s["errors"], s["n_tasks"], s["n_total"]) == (2, 29, 31), s
+    assert sorted(s["errored_ids"]) == ["pdf-02", "web-02"], s["errored_ids"]
+    recs = [json.loads(line) for line in open(trace_path, encoding="utf-8")]
+    ok = [r for r in recs if not r["error"]]
+    assert abs(s["pass_rate_deterministic"] - sum(run_evals.deterministic_pass(r) for r in ok) / 29) < 1e-9
+    assert not any(i in s["failed_ids"] for i in s["errored_ids"]), "errors must not count as failures"
+
+    before = {r["id"]: json.dumps(r, sort_keys=True) for r in recs}
+    s2 = run_evals.main(["--rerun-errors", run_dir, "--delay", "0"], llm_pair=healthy)
+    after_recs = [json.loads(line) for line in open(trace_path, encoding="utf-8")]
+    assert [r["id"] for r in after_recs] == [r["id"] for r in recs], "row order must be preserved"
+    assert (s2["errors"], s2["n_tasks"], s2["n_total"]) == (0, 31, 31), s2
+    for r in after_recs:
+        if r["id"] not in ("pdf-02", "web-02"):
+            assert json.dumps(r, sort_keys=True) == before[r["id"]], f"{r['id']} was modified"
+        else:
+            assert not r["error"] and r["answer"], r["id"]
+
+    s3 = run_evals.main(["--rerun-errors", run_dir, "--delay", "0"], llm_pair=healthy)
+    assert s3["errors"] == 0, "second rerun with nothing errored must be a no-op"
+    print("rerun-errors test passed")
+
+
 def main():
     pair = (FakeLLM(can_call_tools=False), FakeLLM())
     out = tempfile.mkdtemp()
@@ -105,6 +153,7 @@ def main():
     import report
     import glob
     report.main(sorted(glob.glob(os.path.join(out, "*", "summary.json"))))
+    test_rerun_errors()
     print(f"\nOK  v1={s1['pass_rate']:.0%}  v2={s2['pass_rate']:.0%}")
 
 
