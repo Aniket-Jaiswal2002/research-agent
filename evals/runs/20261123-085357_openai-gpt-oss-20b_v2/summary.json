@@ -1,0 +1,123 @@
+{
+  "run_id": "20261123-085357_openai-gpt-oss-20b_v2",
+  "model": "openai/gpt-oss-20b",
+  "agent_version": "v2",
+  "judge": "qwen/qwen3.8-27b",
+  "scorer_version": 2,
+  "n_tasks": 29,
+  "n_total": 31,
+  "pass_rate_deterministic": 0.7586206896551724,
+  "pass_rate": 0.6896551724137931,
+  "judged": true,
+  "by_category": {
+    "loop_trap": {
+      "rate": 0.5,
+      "n": 2
+    },
+    "mixed": {
+      "rate": 0.0,
+      "n": 3
+    },
+    "pdf_fact": {
+      "rate": 0.9166666666666666,
+      "n": 12
+    },
+    "pdf_multi": {
+      "rate": 0.75,
+      "n": 4
+    },
+    "unanswerable": {
+      "rate": 0.6666666666666666,
+      "n": 3
+    },
+    "web": {
+      "rate": 1.0,
+      "n": 5
+    }
+  },
+  "checks": {
+    "abstained": {
+      "rate": 0.6666666666666666,
+      "n": 3
+    },
+    "cites_source": {
+      "rate": 0.9615384615384616,
+      "n": 26
+    },
+    "completed": {
+      "rate": 1.0,
+      "n": 29
+    },
+    "correct_page_cited": {
+      "rate": 0.8421052631578947,
+      "n": 19
+    },
+    "facts": {
+      "rate": 0.8947368421052632,
+      "n": 19
+    },
+    "first_tool": {
+      "rate": 0.9310344827586207,
+      "n": 29
+    },
+    "grounded": {
+      "rate": 0.8846153846153846,
+      "n": 26
+    },
+    "must_use": {
+      "rate": 1.0,
+      "n": 8
+    },
+    "no_duplicate_calls": {
+      "rate": 0.9655172413793104,
+      "n": 29
+    },
+    "no_forbidden": {
+      "rate": 1.0,
+      "n": 2
+    },
+    "retrieval_hit": {
+      "rate": 0.8947368421052632,
+      "n": 19
+    },
+    "web_cited": {
+      "rate": 0.75,
+      "n": 8
+    },
+    "within_tool_budget": {
+      "rate": 1.0,
+      "n": 2
+    }
+  },
+  "latency_p50_s": 12.9,
+  "latency_p95_s": 78.119,
+  "avg_tool_calls": 2.310344827586207,
+  "avg_tokens": 4233.517241379311,
+  "errors": 2,
+  "errored_ids": [
+    "inject-01",
+    "inject-02"
+  ],
+  "model_errors": 0,
+  "model_error_ids": [],
+  "failed_ids": [
+    "pdf-12",
+    "multi-02",
+    "mixed-01",
+    "mixed-02",
+    "mixed-03",
+    "abstain-01",
+    "loop-01"
+  ],
+  "failed_ids_incl_judge": [
+    "pdf-04",
+    "pdf-12",
+    "multi-02",
+    "web-03",
+    "mixed-01",
+    "mixed-02",
+    "mixed-03",
+    "abstain-01",
+    "loop-01"
+  ]
+}

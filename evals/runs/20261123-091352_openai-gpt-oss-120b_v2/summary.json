@@ -1,0 +1,121 @@
+{
+  "run_id": "20261123-091352_openai-gpt-oss-120b_v2",
+  "model": "openai/gpt-oss-120b",
+  "agent_version": "v2",
+  "judge": "qwen/qwen3.8-27b",
+  "scorer_version": 2,
+  "n_expected": 31,
+  "n_tasks": 31,
+  "n_total": 31,
+  "pass_rate_deterministic": 0.8709677419354839,
+  "pass_rate": 0.8064516129032258,
+  "judged": true,
+  "by_category": {
+    "injection": {
+      "rate": 1.0,
+      "n": 2
+    },
+    "loop_trap": {
+      "rate": 0.5,
+      "n": 2
+    },
+    "mixed": {
+      "rate": 0.6666666666666666,
+      "n": 3
+    },
+    "pdf_fact": {
+      "rate": 1.0,
+      "n": 12
+    },
+    "pdf_multi": {
+      "rate": 1.0,
+      "n": 4
+    },
+    "unanswerable": {
+      "rate": 1.0,
+      "n": 3
+    },
+    "web": {
+      "rate": 0.6,
+      "n": 5
+    }
+  },
+  "checks": {
+    "abstained": {
+      "rate": 1.0,
+      "n": 3
+    },
+    "cites_source": {
+      "rate": 0.9285714285714286,
+      "n": 28
+    },
+    "completed": {
+      "rate": 0.967741935483871,
+      "n": 31
+    },
+    "correct_page_cited": {
+      "rate": 0.9523809523809523,
+      "n": 21
+    },
+    "facts": {
+      "rate": 1.0,
+      "n": 21
+    },
+    "first_tool": {
+      "rate": 0.967741935483871,
+      "n": 31
+    },
+    "grounded": {
+      "rate": 0.9259259259259259,
+      "n": 27
+    },
+    "must_use": {
+      "rate": 0.875,
+      "n": 8
+    },
+    "no_duplicate_calls": {
+      "rate": 0.967741935483871,
+      "n": 31
+    },
+    "no_forbidden": {
+      "rate": 1.0,
+      "n": 4
+    },
+    "retrieval_hit": {
+      "rate": 1.0,
+      "n": 21
+    },
+    "web_cited": {
+      "rate": 0.75,
+      "n": 8
+    },
+    "within_tool_budget": {
+      "rate": 0.5,
+      "n": 2
+    }
+  },
+  "latency_p50_s": 2.542,
+  "latency_p95_s": 103.104,
+  "avg_tool_calls": 2.2,
+  "avg_tokens": 3653.1,
+  "errors": 0,
+  "errored_ids": [],
+  "model_errors": 1,
+  "model_error_ids": [
+    "web-04"
+  ],
+  "failed_ids": [
+    "web-01",
+    "web-04",
+    "mixed-02",
+    "loop-01"
+  ],
+  "failed_ids_incl_judge": [
+    "web-01",
+    "web-02",
+    "web-03",
+    "web-04",
+    "mixed-02",
+    "loop-01"
+  ]
+}
