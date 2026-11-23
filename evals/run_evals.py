@@ -59,10 +59,15 @@ def pct(xs, q):
     return xs[min(len(xs) - 1, int(round(q * (len(xs) - 1))))]
 
 
+def deterministic_pass(row):
+    """Pass computed from every applicable check EXCEPT the LLM judge's 'grounded'."""
+    return all(v for k, v in row["checks"].items() if v is not None and k != "grounded")
+
+
 def summarise(rows, meta):
     by_cat = defaultdict(list)
     for r in rows:
-        by_cat[r["category"]].append(r["passed"])
+        by_cat[r["category"]].append(deterministic_pass(r))
     check_names = sorted({k for r in rows for k in r["checks"]})
     check_rates = {}
     for k in check_names:
@@ -73,7 +78,11 @@ def summarise(rows, meta):
     return {
         **meta,
         "n_tasks": len(rows),
+        # deterministic = every check except the judge's 'grounded'; used to compare v1 vs v2
+        "pass_rate_deterministic": sum(deterministic_pass(r) for r in rows) / max(1, len(rows)),
+        # incl. judge = deterministic AND grounded; only meaningful when the run had a judge
         "pass_rate": sum(r["passed"] for r in rows) / max(1, len(rows)),
+        "judged": bool(meta.get("judge")),
         "by_category": {c: {"rate": sum(v) / len(v), "n": len(v)} for c, v in sorted(by_cat.items())},
         "checks": check_rates,
         "latency_p50_s": pct(lat, 0.5),
@@ -81,15 +90,20 @@ def summarise(rows, meta):
         "avg_tool_calls": statistics.mean(r["n_tool_calls"] for r in rows) if rows else 0,
         "avg_tokens": statistics.mean(r["tokens"]["input"] + r["tokens"]["output"] for r in rows) if rows else 0,
         "errors": sum(1 for r in rows if r.get("error")),
-        "failed_ids": [r["id"] for r in rows if not r["passed"]],
+        "failed_ids": [r["id"] for r in rows if not deterministic_pass(r)],
+        "failed_ids_incl_judge": [r["id"] for r in rows if not r["passed"]],
     }
 
 
 def write_report(summary, rows, path):
     s = summary
+    incl_judge = f"{s['pass_rate']:.0%}" if s.get("judged") else "–"
     L = [f"# ResearchMind eval — `{s['model']}` / agent `{s['agent_version']}`", "",
-         f"Run `{s['run_id']}` · {s['n_tasks']} tasks · **pass rate {s['pass_rate']:.0%}**", "",
+         f"Run `{s['run_id']}` · {s['n_tasks']} tasks", "",
          "| Metric | Value |", "|---|---|",
+         f"| **Pass rate (deterministic)** | **{s['pass_rate_deterministic']:.0%}** |",
+         f"| Pass rate (incl. judge) | {incl_judge} |",
+         f"| Judge model | {s.get('judge') or '–'} |",
          f"| Latency p50 / p95 | {s['latency_p50_s']:.1f}s / {s['latency_p95_s']:.1f}s |",
          f"| Avg tool calls | {s['avg_tool_calls']:.2f} |",
          f"| Avg tokens / task | {s['avg_tokens']:.0f} |",
@@ -178,7 +192,9 @@ def main(argv=None, llm_pair=None, judge_llm=None):
     summary = summarise(rows, meta)
     json.dump(summary, open(os.path.join(run_dir, "summary.json"), "w"), indent=2)
     write_report(summary, rows, os.path.join(run_dir, "report.md"))
-    print(f"\nPass rate: {summary['pass_rate']:.0%}  ->  {run_dir}/report.md")
+    incl = f"{summary['pass_rate']:.0%}" if summary["judged"] else "–"
+    print(f"\nPass rate (deterministic): {summary['pass_rate_deterministic']:.0%}  "
+          f"(incl. judge: {incl})  ->  {run_dir}/report.md")
     return summary
 
 
