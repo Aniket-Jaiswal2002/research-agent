@@ -1,7 +1,7 @@
 """Run the ResearchMind eval suite.
 
-    python evals/run_evals.py --model llama-3.1-8b-instant --agent-version v1
-    python evals/run_evals.py --model llama-3.3-70b-versatile --agent-version v2 --judge
+    python evals/run_evals.py --model openai/gpt-oss-20b --agent-version v1
+    python evals/run_evals.py --model openai/gpt-oss-120b --agent-version v2 --judge
     python evals/run_evals.py --only pdf_fact,injection --limit 5
 
 Writes evals/runs/<run>/{traces.jsonl, summary.json, report.md}.
@@ -113,14 +113,14 @@ def write_report(summary, rows, path):
 
 def main(argv=None, llm_pair=None, judge_llm=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default=os.getenv("RM_MODEL", "llama-3.1-8b-instant"))
+    ap.add_argument("--model", default=os.getenv("RM_MODEL", "openai/gpt-oss-20b"))
     ap.add_argument("--agent-version", default="v1", choices=["v1", "v2"])
     ap.add_argument("--tasks", default=os.path.join(EVALS, "tasks.json"))
     ap.add_argument("--only", help="comma-separated categories")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--delay", type=float, default=2.0, help="seconds between tasks (free-tier rate limits)")
     ap.add_argument("--judge", action="store_true", help="add LLM-as-judge groundedness check")
-    ap.add_argument("--judge-model", default="llama-3.3-70b-versatile")
+    ap.add_argument("--judge-model", default="qwen/qwen3.8-27b")
     ap.add_argument("--out", default=os.path.join(EVALS, "runs"))
     args = ap.parse_args(argv)
 

@@ -58,9 +58,9 @@ cp .env.example .env          # add GROQ_API_KEY + TAVILY_API_KEY
 
 python evals/test_offline.py  # harness smoke test, no keys needed
 
-python evals/run_evals.py --model llama-3.1-8b-instant    --agent-version v1
-python evals/run_evals.py --model llama-3.1-8b-instant    --agent-version v2
-python evals/run_evals.py --model llama-3.3-70b-versatile --agent-version v2 --judge
+python evals/run_evals.py --model openai/gpt-oss-20b  --agent-version v1
+python evals/run_evals.py --model openai/gpt-oss-20b  --agent-version v2 --judge
+python evals/run_evals.py --model openai/gpt-oss-120b --agent-version v2 --judge --delay 5
 
 python evals/report.py evals/runs/*/summary.json > evals/RESULTS.md
 ```
@@ -71,3 +71,5 @@ Each run writes `evals/runs/<run>/`:
 - `report.md`: per-category table plus every failure with its tool path and answer
 
 On Groq's free tier, keep `--delay 2` (default) or higher. The runner also retries on 429s.
+
+Judge model differs from the model under test to avoid self-preference bias.
