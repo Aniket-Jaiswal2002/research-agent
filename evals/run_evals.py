@@ -347,7 +347,7 @@ def resume(run_dir, tasks_path, delay=2.0, stop_on_infra_error=False, cli=None,
 def main(argv=None, llm_pair=None, judge_llm=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=os.getenv("RM_MODEL", "openai/gpt-oss-20b"))
-    ap.add_argument("--agent-version", default="v1", choices=["v1", "v2"])
+    ap.add_argument("--agent-version", default="v1", choices=["v1", "v2", "v3"])
     ap.add_argument("--tasks", default=os.path.join(EVALS, "tasks.json"))
     ap.add_argument("--only", help="comma-separated categories")
     ap.add_argument("--limit", type=int)

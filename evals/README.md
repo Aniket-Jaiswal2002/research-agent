@@ -49,6 +49,12 @@ Splitting `retrieval_hit` from `correct_page_cited` matters. When a fact check f
 
 - **v1**: the original loop (baseline)
 - **v2**: dedupes every tool call (v1 only deduped PDF search), forces a tool-free final answer when the 6-iteration budget runs out (v1 returned `""`), and tells the model that tool output is data, not instructions
+- **v3**: v2 plus guardrails enforced in code instead of asked for in the prompt (select with `--agent-version v3`):
+  - **PDF-first**: the first LLM call is made with `tool_choice=pdf_search_tool`.
+  - **Citations**: if the answer has no URL after a web search, or no `Page N` after a PDF search, a `Sources:` block is appended, built from what the tools actually returned. This guarantees a citation is *present*, not that it is the page the answer used, so it can raise `cites_source`, `web_cited` and `correct_page_cited` without making answers more correct. Read those three checks with that in mind.
+  - **Parse failures**: a model HTTP 400 (`output_parse_failed`, ...) is retried once, then the loop falls back to a tool-free final answer, and as a last resort a fixed message. Infra errors (429, 5xx, timeouts) are not swallowed.
+
+  v3 is tested offline only (`python evals/test_offline.py`); it has not been run against the real Groq API yet.
 
 ## Running
 

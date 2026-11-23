@@ -3,16 +3,23 @@
 `run_agent()` returns a full trace (tool calls, args, latency, tokens) so the
 loop can be evaluated. `chat()` keeps the old string-only interface for api.py.
 
-Two loop versions exist so the eval suite can show a before/after:
+Three loop versions exist so the eval suite can show a before/after:
   v1 — the original loop, unchanged behaviour (baseline)
-  v2 — guardrails: dedupe *every* tool call, forced final answer when the
-       iteration budget runs out, and no empty answers.
+  v2 — guardrails in the prompt and loop: dedupe *every* tool call, forced final
+       answer when the iteration budget runs out, and no empty answers.
+  v3 — v2 plus guardrails enforced in code, not by asking the model nicely:
+       * PDF-first: the first LLM call is made with tool_choice=pdf_search_tool;
+       * citations: if the answer cites no URL after a web search, or no page after a
+         PDF search, a "Sources:" block built from the tool results is appended;
+       * parse failures: a model HTTP 400 (output_parse_failed, ...) is retried once, then
+         the loop falls back to a tool-free final answer instead of crashing.
 """
 import os
+import re
 import time
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from tools import pdf_search_tool, web_search_tool
 
 load_dotenv()
@@ -48,14 +55,70 @@ FINAL_ANSWER_NUDGE = (
     "with sources in the required format. If they don't contain the answer, say so."
 )
 
+EMPTY_ANSWER = "I could not produce an answer from the available sources."
+PARSE_FAILURE_ANSWER = ("I could not produce an answer: the language model failed to generate a valid "
+                        "response. Please try again.")
+
+# ── v3 helpers ────────────────────────────────────────────────────────
+# A model-side HTTP 400 (the model's own output was rejected). Infra errors (429, 5xx, timeouts)
+# are NOT matched here and still propagate.
+_MODEL_400_RE = re.compile(r"BadRequestError|Error code: 400|output_parse_failed|tool_use_failed|failed_generation", re.I)
+_URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
+_URL_FIELD_RE = re.compile(r"""['"]url['"]\s*:\s*['"](https?://[^'"]+)['"]""")
+_PAGE_CITED_RE = re.compile(r"\b(?:pages?|pp?\.)\s*\d", re.I)
+_PDF_SOURCE_RE = re.compile(r"\[Source: ([^,\]]+), Page (\d+)\]")
+MAX_APPENDED_URLS = 5
+
+
+def is_model_400(exc: Exception) -> bool:
+    return getattr(exc, "status_code", None) == 400 or bool(_MODEL_400_RE.search(f"{type(exc).__name__}: {exc}"))
+
+
+def append_missing_citations(answer: str, pdf_results: list, web_results: list):
+    """Append a "Sources:" block for what the answer failed to cite. Returns (answer, {"web", "pdf"}).
+
+    Built only from tool results that were actually returned: URLs from the web tool, and the
+    (file, page) pairs the PDF tool actually retrieved. It guarantees a citation is PRESENT; it
+    cannot know which retrieved page the answer really used.
+    """
+    lines, added = [], {"web": False, "pdf": False}
+    if web_results and not _URL_RE.search(answer):
+        urls = []
+        for r in web_results:
+            for u in (_URL_FIELD_RE.findall(r) or _URL_RE.findall(r)):
+                u = u.rstrip(".,;")
+                if u not in urls:
+                    urls.append(u)
+        if urls:
+            lines += [f"- {u}" for u in urls[:MAX_APPENDED_URLS]]
+            added["web"] = True
+    if pdf_results and not _PAGE_CITED_RE.search(answer):
+        seen = []
+        for r in pdf_results:
+            for src, page in _PDF_SOURCE_RE.findall(r):
+                if (src, int(page)) not in seen:
+                    seen.append((src, int(page)))
+        if seen:
+            lines.append(" ".join(f"(Source: {s}, Page {p})" for s, p in seen))
+            added["pdf"] = True
+    if lines:
+        answer = answer.rstrip() + "\n\nSources:\n" + "\n".join(lines)
+    return answer, added
+
+
 _llm_cache = {}
 
 
 def get_llm(model: str = DEFAULT_MODEL):
-    """Return (llm, llm_with_tools) for a model name, cached."""
+    """Return (llm, llm_with_tools, llm_force_pdf) for a model name, cached.
+
+    llm_force_pdf is bound with tool_choice=pdf_search_tool; v3 uses it for the first call only.
+    """
     if model not in _llm_cache:
         llm = ChatGroq(model=model, temperature=0)
-        _llm_cache[model] = (llm, llm.bind_tools([pdf_search_tool, web_search_tool]))
+        both = [pdf_search_tool, web_search_tool]
+        _llm_cache[model] = (llm, llm.bind_tools(both),
+                             llm.bind_tools(both, tool_choice="pdf_search_tool"))
     return _llm_cache[model]
 
 
@@ -68,13 +131,20 @@ def run_agent(question: str, model: str = DEFAULT_MODEL, version: str = DEFAULT_
               llm_pair=None, verbose: bool = False) -> dict:
     """Run the agent and return {answer, steps, tokens, latency_s, ...}.
 
-    llm_pair lets tests inject a fake (llm, llm_with_tools).
+    llm_pair lets tests inject fakes: (llm, llm_with_tools) or, for v3's forced first call,
+    (llm, llm_with_tools, llm_force_pdf). Without the third element v3 falls back to the
+    unforced runner for its first call.
     """
-    llm, llm_with_tools = llm_pair or get_llm(model)
-    prompt = system_prompt + (V2_EXTRA_RULES if version == "v2" else "")
+    llm, llm_with_tools, *extra = llm_pair or get_llm(model)
+    llm_force_pdf = extra[0] if extra else None
+    v2plus = version in ("v2", "v3")
+    v3 = version == "v3"
+    prompt = system_prompt + (V2_EXTRA_RULES if v2plus else "")
     messages = [SystemMessage(content=prompt), HumanMessage(content=question)]
 
     steps, tokens = [], {"input": 0, "output": 0}
+    raw_results = {"pdf_search_tool": [], "web_search_tool": []}  # untruncated results of executed calls
+    recovery = {"retries": 0, "tool_free_fallbacks": 0, "static_fallbacks": 0}
     llm_calls = 0
     t0 = time.perf_counter()
 
@@ -88,7 +158,41 @@ def run_agent(question: str, model: str = DEFAULT_MODEL, version: str = DEFAULT_
         messages.append(resp)
         return resp
 
-    response = invoke(llm_with_tools)
+    def final_answer():
+        """Tool-free final answer. v3: one retry on a model 400, then a fixed message, never a crash."""
+        messages.append(HumanMessage(content=FINAL_ANSWER_NUDGE))
+        if not v3:
+            return invoke(llm)
+        for attempt in range(2):
+            try:
+                return invoke(llm)
+            except Exception as e:
+                if not is_model_400(e):
+                    raise
+                if attempt == 0:
+                    recovery["retries"] += 1
+        recovery["static_fallbacks"] += 1
+        resp = AIMessage(content=PARSE_FAILURE_ANSWER)
+        messages.append(resp)
+        return resp
+
+    def call(runner):
+        """One LLM call. v3: on a model 400 retry once, then fall back to a tool-free final answer."""
+        if not v3:
+            return invoke(runner)
+        for attempt in range(2):
+            try:
+                return invoke(runner)
+            except Exception as e:
+                if not is_model_400(e):
+                    raise
+                if attempt == 0:
+                    recovery["retries"] += 1
+        recovery["tool_free_fallbacks"] += 1
+        return final_answer()
+
+    forced_pdf_first = v3 and llm_force_pdf is not None
+    response = call(llm_force_pdf if forced_pdf_first else llm_with_tools)
     iteration = 0
     seen = set()
     hit_budget = False
@@ -98,7 +202,7 @@ def run_agent(question: str, model: str = DEFAULT_MODEL, version: str = DEFAULT_
         for tc in response.tool_calls:
             name, args = tc["name"], tc["args"]
             key = (name, str(args))
-            # v1 only deduped pdf searches; v2 dedupes every tool
+            # v1 only deduped pdf searches; v2/v3 dedupe every tool
             dedupe = name == "pdf_search_tool" if version == "v1" else True
             duplicate = key in seen
             ts = time.perf_counter()
@@ -106,6 +210,7 @@ def run_agent(question: str, model: str = DEFAULT_MODEL, version: str = DEFAULT_
                 result = "Already searched this. Try different keywords."
             elif name in TOOLS:
                 result = TOOLS[name].invoke(args)
+                raw_results[name].append(str(result))
             else:
                 result = "Tool not found"
             seen.add(key)
@@ -118,21 +223,25 @@ def run_agent(question: str, model: str = DEFAULT_MODEL, version: str = DEFAULT_
                 print(f"  -> {name}({args}) dup={duplicate}")
             messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
 
-        response = invoke(llm_with_tools)
+        response = call(llm_with_tools)
 
     if response.tool_calls:
         hit_budget = True
         # v1 returned response.content here, which is usually "" (the model
-        # still wanted to call tools). v2 forces a tool-free final answer.
-        if version == "v2":
-            messages.append(HumanMessage(content=FINAL_ANSWER_NUDGE))
-            response = invoke(llm)
+        # still wanted to call tools). v2/v3 force a tool-free final answer.
+        if v2plus:
+            response = final_answer()
 
     answer = response.content if isinstance(response.content, str) else str(response.content)
-    if version == "v2" and not answer.strip():
-        answer = "I could not produce an answer from the available sources."
+    if v2plus and not answer.strip():
+        answer = EMPTY_ANSWER
 
-    return {
+    citations_appended = {"web": False, "pdf": False}
+    if v3 and answer.strip() and answer not in (EMPTY_ANSWER, PARSE_FAILURE_ANSWER):
+        answer, citations_appended = append_missing_citations(
+            answer, raw_results["pdf_search_tool"], raw_results["web_search_tool"])
+
+    trace = {
         "question": question,
         "answer": answer,
         "steps": steps,
@@ -144,6 +253,10 @@ def run_agent(question: str, model: str = DEFAULT_MODEL, version: str = DEFAULT_
         "model": model,
         "agent_version": version,
     }
+    if v3:
+        trace.update({"forced_pdf_first": forced_pdf_first, "recovery": recovery,
+                      "citations_appended": citations_appended})
+    return trace
 
 
 def chat(question: str) -> str:

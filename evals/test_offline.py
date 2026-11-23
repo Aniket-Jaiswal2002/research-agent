@@ -226,6 +226,192 @@ def test_resume():
     print("resume + stop-on-infra-error test passed")
 
 
+# ── v3 guardrails ─────────────────────────────────────────────────────
+class WebFirstLLM(FakeLLM):
+    """Ignores the 'PDF first' rule: its first call is always a web search."""
+
+    def invoke(self, messages):
+        if not any(isinstance(m, ToolMessage) for m in messages):
+            self.n += 1
+            q = next(m.content for m in messages if isinstance(m, HumanMessage))
+            return AIMessage(content="", tool_calls=[{"name": "web_search_tool", "args": {"query": q}, "id": f"w{self.n}"}])
+        return super().invoke(messages)
+
+
+class ForcedPdfLLM(FakeLLM):
+    """Stands in for llm.bind_tools(..., tool_choice="pdf_search_tool"): always calls the PDF tool.
+
+    `fail_times` makes the first N invocations raise `exc` (None = always), to test recovery.
+    """
+
+    def __init__(self, fail_times=0, exc=None, **kw):
+        super().__init__(**kw)
+        self.fail_times, self.exc, self.attempts = fail_times, exc or MODEL, 0
+
+    def invoke(self, messages):
+        self.attempts += 1
+        if self.fail_times is None or self.attempts <= self.fail_times:
+            raise self.exc
+        self.n += 1
+        q = next(m.content for m in messages if isinstance(m, HumanMessage))
+        return AIMessage(content="", tool_calls=[{"name": "pdf_search_tool", "args": {"query": q.lower()}, "id": f"f{self.n}"}])
+
+
+class NoCiteLLM(FakeLLM):
+    """Searches like FakeLLM but its final answer never cites anything."""
+
+    def invoke(self, messages):
+        r = super().invoke(messages)
+        return r if r.tool_calls else AIMessage(content="The brief covers that topic.")
+
+
+class PageOnlyLLM(FakeLLM):
+    """Final answer cites a PDF page but no URL."""
+
+    def invoke(self, messages):
+        r = super().invoke(messages)
+        return r if r.tool_calls else AIMessage(content="Answer. (Source: helios7-brief.pdf, Page 3)")
+
+
+class Flaky400LLM(FakeLLM):
+    """Raises `exc` (default: a model 400) for the first `fail_times` calls (None = always), then behaves."""
+
+    def __init__(self, fail_times=None, exc=None, **kw):
+        super().__init__(**kw)
+        self.fail_times, self.exc, self.attempts = fail_times, exc or MODEL, 0
+
+    def invoke(self, messages):
+        self.attempts += 1
+        if self.fail_times is None or self.attempts <= self.fail_times:
+            raise self.exc
+        return super().invoke(messages)
+
+
+def test_v3():
+    """v3 enforces PDF-first, citations and 400-recovery in code; each guardrail has a v2 control."""
+    import re as _re
+    from scorers import cited_pages
+    run_evals.ensure_fixture()
+    Q = "What is the gravimetric energy density of Helios-7?"
+    QW = "Who is the current CEO of Toyota?"
+    QLOOP = "Tell me everything about Helios-7."
+
+    def run(version, pair, q=Q):
+        return agent.run_agent(q, version=version, llm_pair=pair)
+
+    def raises(exc_type, version, pair, q=Q):
+        try:
+            run(version, pair, q)
+        except exc_type:
+            return True
+        return False
+
+    # ---- 1. PDF-first is enforced by tool_choice, not by the prompt --------------------------------
+    r2 = run("v2", (FakeLLM(False), WebFirstLLM(), ForcedPdfLLM()))
+    assert r2["steps"][0]["tool"] == "web_search_tool", "control: v2 trusts the model, so web-first slips through"
+    forced = ForcedPdfLLM()
+    r3 = run("v3", (FakeLLM(False), WebFirstLLM(), forced))
+    assert r3["steps"][0]["tool"] == "pdf_search_tool" and r3["forced_pdf_first"] is True
+    assert forced.n == 1, "the forced runner is used for the first call only"
+    for v in ("v1", "v2"):
+        unused = ForcedPdfLLM()
+        run(v, (FakeLLM(False), FakeLLM(), unused))
+        assert unused.n == 0 and unused.attempts == 0, f"{v} must never use the forced runner"
+    r3b = run("v3", (FakeLLM(False), FakeLLM()))  # a 2-tuple has no forced runner: falls back, still works
+    assert r3b["forced_pdf_first"] is False and r3b["answer"]
+    # the real wiring: ChatGroq.bind_tools(tool_choice=...) encodes what the Groq API expects
+    _llm, bound, forced_real = agent.get_llm("openai/gpt-oss-20b")
+    assert forced_real.kwargs["tool_choice"] == {"type": "function", "function": {"name": "pdf_search_tool"}}
+    assert bound.kwargs.get("tool_choice") is None
+    assert [t["function"]["name"] for t in forced_real.kwargs["tools"]] == ["pdf_search_tool", "web_search_tool"]
+
+    # ---- 2. citations ------------------------------------------------------------------------------
+    nocite = lambda: (NoCiteLLM(False), NoCiteLLM(), ForcedPdfLLM())  # noqa: E731
+    base = agent.run_agent(Q, version="v2", llm_pair=nocite())
+    assert base["answer"] == "The brief covers that topic.", "control: v2 leaves an uncited answer uncited"
+
+    r = run("v3", nocite())  # (a) PDF used, no page cited -> the pages actually retrieved are appended
+    retrieved = sorted({int(p) for s in r["steps"] if s["tool"] == "pdf_search_tool"
+                        for p in _re.findall(r"Page (\d+)\]", s["result"])})
+    assert retrieved and r["citations_appended"] == {"web": False, "pdf": True}, r["citations_appended"]
+    assert sorted(cited_pages(r["answer"])) == retrieved, (r["answer"], retrieved)
+    assert r["answer"].startswith("The brief covers that topic.\n\nSources:\n")
+
+    r = run("v3", nocite(), QW)  # (b) PDF + web used, nothing cited -> both appended in one block
+    assert r["citations_appended"] == {"web": True, "pdf": True}, r["citations_appended"]
+    assert "- https://example.com/news" in r["answer"] and r["answer"].count("Sources:") == 1
+
+    r = run("v3", (FakeLLM(False), PageOnlyLLM(), ForcedPdfLLM()), QW)  # (c) page cited, URL missing
+    assert r["citations_appended"] == {"web": True, "pdf": False}, r["citations_appended"]
+    assert r["answer"].count("(Source:") == 1, "the cited page must not be duplicated"
+
+    ok = (FakeLLM(False), FakeLLM(), ForcedPdfLLM())  # (d) already cited -> answer untouched
+    ra, rb = run("v2", ok, QW), run("v3", (FakeLLM(False), FakeLLM(), ForcedPdfLLM()), QW)
+    assert rb["citations_appended"] == {"web": False, "pdf": False} and rb["answer"] == ra["answer"]
+
+    ap = agent.append_missing_citations  # (e) the helper in isolation
+    assert ap("ok, see page 3", ["[Source: f.pdf, Page 3]\nx"], []) == ("ok, see page 3", {"web": False, "pdf": False})
+    assert ap("ok, pp. 3-6", ["[Source: f.pdf, Page 3]\nx"], [])[1]["pdf"] is False
+    a, added = ap("ok", ["[Source: f.pdf, Page 3]\nt\n\n---\n\n[Source: f.pdf, Page 6]\nu\n\n[Source: f.pdf, Page 3]\nv"], [])
+    assert a == "ok\n\nSources:\n(Source: f.pdf, Page 3) (Source: f.pdf, Page 6)" and added["pdf"], a
+    web = ["[{'url': 'https://a.com/1', 'content': 'x https://inline.com/z'}, {'url': 'https://b.com', 'content': 'y'}]",
+           '[{"url": "https://a.com/1", "content": "dup"}, {"url": "https://c.com", "content": "z"}]']
+    a, added = ap("ok", [], web)
+    assert a == "ok\n\nSources:\n- https://a.com/1\n- https://b.com\n- https://c.com" and added["web"], a  # no dups, no inline links
+    many = ["[{'url': 'https://s%d.com', 'content': ''}]" % i for i in range(9)]
+    assert ap("ok", [], many)[0].count("\n- ") == agent.MAX_APPENDED_URLS
+    assert ap("see https://x.org", [], web) == ("see https://x.org", {"web": False, "pdf": False})
+    assert ap("ok", [], ["no urls in here"]) == ("ok", {"web": False, "pdf": False})
+    assert ap("ok", [], []) == ("ok", {"web": False, "pdf": False})
+
+    # ---- 3. parse failures (model HTTP 400) --------------------------------------------------------
+    flaky = Flaky400LLM(fail_times=1)  # (a) one 400 in the loop -> the retry succeeds
+    r = run("v3", (FakeLLM(False), flaky, ForcedPdfLLM()))
+    assert flaky.attempts == 2 and r["recovery"] == {"retries": 1, "tool_free_fallbacks": 0, "static_fallbacks": 0}, r["recovery"]
+    assert r["answer"] and "Page" in r["answer"]
+
+    ff = ForcedPdfLLM(fail_times=1)  # (b) one 400 on the forced first call -> retry succeeds, still PDF-first
+    r = run("v3", (FakeLLM(False), FakeLLM(), ff))
+    assert ff.attempts == 2 and r["steps"][0]["tool"] == "pdf_search_tool" and r["recovery"]["retries"] == 1
+
+    always = Flaky400LLM(fail_times=None)  # (c) 400 every time in the loop -> retry once, then tool-free answer
+    r = run("v3", (FakeLLM(False), always, ForcedPdfLLM()))
+    assert always.attempts == 2, "exactly one retry"
+    assert r["recovery"] == {"retries": 1, "tool_free_fallbacks": 1, "static_fallbacks": 0}, r["recovery"]
+    assert r["answer"] and r["answer"] != agent.PARSE_FAILURE_ANSWER and [s["tool"] for s in r["steps"]] == ["pdf_search_tool"]
+
+    r = run("v3", (Flaky400LLM(fail_times=None), FakeLLM(), ForcedPdfLLM(fail_times=None)))  # (d) first call never works
+    assert r["steps"] == [] and r["recovery"]["tool_free_fallbacks"] == 1 and r["answer"], r
+
+    r = run("v3", (Flaky400LLM(fail_times=None), Flaky400LLM(fail_times=None), ForcedPdfLLM()))  # (e) nothing works: no crash
+    assert r["answer"] == agent.PARSE_FAILURE_ANSWER, r["answer"]
+    assert r["recovery"]["static_fallbacks"] == 1 and r["citations_appended"] == {"web": False, "pdf": False}
+
+    one = Flaky400LLM(fail_times=1, can_call_tools=False)  # (f) the budget-exhausted final answer also retries
+    r = run("v3", (one, FakeLLM(), ForcedPdfLLM()), QLOOP)
+    assert r["hit_iteration_budget"] and one.attempts == 2 and r["recovery"]["retries"] == 1 and r["answer"]
+
+    # controls and boundaries
+    assert raises(BadRequestError, "v2", (FakeLLM(False), Flaky400LLM(fail_times=None), ForcedPdfLLM())), "control: v2 crashes"
+    assert raises(RuntimeError, "v3", (FakeLLM(False), Flaky400LLM(fail_times=None, exc=INFRA), ForcedPdfLLM())), \
+        "infra errors (429/5xx/timeouts) must still propagate"
+    assert raises(RuntimeError, "v3", (FakeLLM(False), FakeLLM(), ForcedPdfLLM(fail_times=None, exc=INFRA)))
+    assert agent.is_model_400(MODEL) and not agent.is_model_400(INFRA)
+    assert agent.is_model_400(types.SimpleNamespace(status_code=400)) is True  # attribute-style 400s too
+
+    # ---- 4. through the harness: v3 beats v2 on exactly the checks it enforces ----------------------
+    out = tempfile.mkdtemp()
+    wf = lambda: (FakeLLM(False), WebFirstLLM(), ForcedPdfLLM())  # noqa: E731
+    h2 = run_evals.main(["--agent-version", "v2", "--delay", "0", "--out", out], llm_pair=wf())
+    h3 = run_evals.main(["--agent-version", "v3", "--delay", "0", "--out", out], llm_pair=wf())
+    assert h2["checks"]["first_tool"]["rate"] < 1.0 == h3["checks"]["first_tool"]["rate"], (h2["checks"]["first_tool"], h3["checks"]["first_tool"])
+    c2 = run_evals.main(["--agent-version", "v2", "--delay", "0", "--out", out], llm_pair=nocite())
+    c3 = run_evals.main(["--agent-version", "v3", "--delay", "0", "--out", out], llm_pair=nocite())
+    for chk in ("cites_source", "web_cited"):
+        assert c2["checks"][chk]["rate"] < 1.0 == c3["checks"][chk]["rate"], (chk, c2["checks"][chk], c3["checks"][chk])
+    print("v3 guardrail tests passed")
+
+
 def main():
     pair = (FakeLLM(can_call_tools=False), FakeLLM())
     out = tempfile.mkdtemp()
@@ -244,6 +430,7 @@ def main():
     report.main(sorted(glob.glob(os.path.join(out, "*", "summary.json"))))
     test_error_policy_and_rerun()
     test_resume()
+    test_v3()
     print(f"\nOK  v1={s1['pass_rate']:.0%}  v2={s2['pass_rate']:.0%}")
 
 
