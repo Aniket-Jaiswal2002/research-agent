@@ -65,3 +65,29 @@ Reading the table:
 - The fix moved v1 by **+16.1 points** and v2 by **+6.9**, so the old v1-vs-v2 gap (7.7 points in v2's favour) was partly an artefact: v1's answers happened to use the typography the old scorer rejected.
 - v1 was scored on 31 tasks and v2 on 29 (inject-01 and inject-02 errored). On the **same 29 tasks** v1 scores 22/29 = 75.9%, identical to v2. They disagree on four of those tasks: v2 fixes abstain-02 and abstain-03 (v1 returned empty answers), but fails multi-02 and mixed-01 where v1 passed.
 - At 31 tasks each task is ≈3 points, so differences under ~10 points are within run-to-run variance.
+
+## Version 3 — spaces around a slash in units
+
+### Why
+
+The live v3 smoke test (`--limit 1` re-run, gpt-oss-20b) produced a correct `pdf-01` answer, "…density of **412 Wh / kg**", which version 2 failed: the `facts` pattern `412\s*Wh/kg` has no room for spaces around the slash. Same kind of false negative as in version 2, a new formatting variant.
+
+### What changed
+
+`normalize()` also removes whitespace around a `/` that has letters on both sides: `Wh / kg`, `Wh /kg`, `Wh/ kg` → `Wh/kg`. Numbers and URLs are untouched (`5 / 10`, `412/480`, `https://example.com/news`).
+
+### Guard rails
+
+`evals/test_scorers.py` now has 31 tests. New positives: every spaced-slash spelling normalises to `Wh/kg`, and the real smoke-test answer passes. New negatives that must still fail: `321 Wh / kg` (wrong number) and `412 Wh / L` (wrong unit).
+
+### Effect on finished runs
+
+Re-scored offline with `resummarise.py`, no API calls. **No task changed outcome in any run**; none of the committed runs happened to contain a spaced slash. Only `scorer_version` in their summaries moved from 2 to 3.
+
+| Run | Before | After | Tasks that changed |
+|---|---|---|---|
+| `openai/gpt-oss-20b` · v1 · full | 77.4% (24/31) | 77.4% (24/31) | none |
+| `openai/gpt-oss-20b` · v2 · full (29 scored, 2 infra errors excluded) | 75.9% (22/29) | 75.9% (22/29) | none |
+| `openai/gpt-oss-120b` · v2 · full | 87.1% (27/31) | 87.1% (27/31) | none |
+
+The v3-agent smoke run is not in the table: it is a scratch run outside the repo and is not committed.

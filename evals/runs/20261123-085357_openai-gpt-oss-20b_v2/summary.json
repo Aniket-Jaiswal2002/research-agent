@@ -3,7 +3,7 @@
   "model": "openai/gpt-oss-20b",
   "agent_version": "v2",
   "judge": "qwen/qwen3.8-27b",
-  "scorer_version": 2,
+  "scorer_version": 3,
   "n_tasks": 29,
   "n_total": 31,
   "pass_rate_deterministic": 0.7586206896551724,

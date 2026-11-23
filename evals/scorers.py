@@ -7,9 +7,10 @@ import json
 import re
 import unicodedata
 
-# 1 = original (exact-character matching); 2 = Unicode/unit normalisation + multi-page citation parsing.
+# 1 = original (exact-character matching); 2 = Unicode/unit normalisation + multi-page citation parsing;
+# 3 = also spaces around "/" between letters ("Wh / kg" -> "Wh/kg").
 # See evals/SCORER_CHANGELOG.md. Saved in every summary.json; runs without the key were scored with 1.
-SCORER_VERSION = 2
+SCORER_VERSION = 3
 
 PAGE_RE = re.compile(r"Page\s*(\d+)", re.I)  # kept for backwards compatibility; see cited_pages()
 
@@ -18,6 +19,8 @@ _DASHES = {cp: "-" for cp in range(0x2010, 0x2016)}
 _DASHES[0x2212] = "-"
 # "Wh kg-1", "Wh·kg-1" -> "Wh/kg" (after NFKC, "kg⁻¹" has become "kg−1" -> "kg-1")
 _PER_UNIT_RE = re.compile(r"(?<=\w)[\s·⋅]+(kg|mg|g|ml|l|cm|mm|m|s|h)-1(?!\d)", re.I)
+# "Wh / kg", "Wh /kg", "Wh/ kg" -> "Wh/kg" (letters on both sides, so "5 / 10" and URLs are untouched)
+_SPACED_SLASH_RE = re.compile(r"(?<=[A-Za-z])\s*/\s*(?=[A-Za-z])")
 
 _NUM = r"\d{1,3}(?!\d)"
 _RANGE = rf"{_NUM}(?:\s*(?:-|to)\s*{_NUM})?"
@@ -34,6 +37,7 @@ def normalize(text: str) -> str:
     """
     t = unicodedata.normalize("NFKC", text or "").translate(_DASHES)
     t = _PER_UNIT_RE.sub(lambda m: "/" + m.group(1), t)
+    t = _SPACED_SLASH_RE.sub("/", t)
     return re.sub(r"[ \t]+", " ", t)
 URL_RE = re.compile(r"https?://\S+")
 ABSTAIN_RE = re.compile(

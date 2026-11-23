@@ -3,7 +3,7 @@
   "model": "openai/gpt-oss-120b",
   "agent_version": "v2",
   "judge": "qwen/qwen3.8-27b",
-  "scorer_version": 2,
+  "scorer_version": 3,
   "n_expected": 31,
   "n_tasks": 31,
   "n_total": 31,

@@ -39,4 +39,4 @@
 - **Groundedness** is the judge's verdict on whether the answer is supported by the tool results; it is reported separately and only exists for judged runs. Judge model(s): `qwen/qwen3.8-27b`; each differs from the model under test.
 - **Infra errors** (429, 5xx, timeouts, ...) are excluded from every rate; **model errors** (HTTP 400 such as `output_parse_failed`) count as failures. See `evals/README.md`.
 - 31 tasks; each task ≈ 3 points. Differences under ~10 points are within run-to-run variance.
-- Scorer version(s): 2 (see `evals/SCORER_CHANGELOG.md`).
+- Scorer version(s): 3 (see `evals/SCORER_CHANGELOG.md`).

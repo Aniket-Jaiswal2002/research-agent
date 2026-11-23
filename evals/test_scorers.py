@@ -79,6 +79,15 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(normalize("412 Wh·kg⁻¹"), "412 Wh/kg")
         self.assertEqual(normalize("1,050 Wh L⁻¹"), "1,050 Wh/L")
 
+    def test_spaces_around_slash(self):
+        for spaced in ("412 Wh / kg", "412 Wh /kg", "412 Wh/ kg", "412 Wh  /  kg", "412 Wh / kg"):
+            self.assertEqual(normalize(spaced), "412 Wh/kg", repr(spaced))
+
+    def test_slash_rule_leaves_numbers_and_urls_alone(self):
+        self.assertEqual(normalize("5 / 10 cells"), "5 / 10 cells")
+        self.assertEqual(normalize("https://example.com/news"), "https://example.com/news")
+        self.assertEqual(normalize("412/480"), "412/480")
+
     def test_does_not_rewrite_unrelated_text(self):
         self.assertEqual(normalize("Helios-7 and 5-1 odds"), "Helios-7 and 5-1 odds")
         self.assertEqual(normalize("pack-1"), "pack-1")
@@ -146,6 +155,19 @@ class NegativesStillFail(unittest.TestCase):
     def test_wrong_number(self):
         res = score(TASKS["pdf-01"], trace("It is 421 Wh/kg. (Source: helios7-brief.pdf, Page 3)", 3))
         self.assertFalse(res["passed"])
+        self.assertEqual(failed_checks(res), ["facts"])
+
+    def test_spaced_slash_answer_from_the_live_v3_smoke_run_passes(self):
+        ans = "The Helios‑7 cell achieves a gravimetric energy density of **412 Wh / kg**.    (Source: helios7-brief.pdf, Page 3)"
+        res = score(TASKS["pdf-01"], trace(ans, 3))
+        self.assertTrue(res["passed"], res["checks"])
+
+    def test_wrong_number_with_spaced_slash_still_fails(self):
+        res = score(TASKS["pdf-01"], trace("It is 321 Wh / kg. (Source: helios7-brief.pdf, Page 3)", 3))
+        self.assertEqual(failed_checks(res), ["facts"])
+
+    def test_wrong_unit_with_spaced_slash_still_fails(self):
+        res = score(TASKS["pdf-01"], trace("It is 412 Wh / L. (Source: helios7-brief.pdf, Page 3)", 3))
         self.assertEqual(failed_checks(res), ["facts"])
 
     def test_wrong_number_with_fancy_unit_formatting(self):
