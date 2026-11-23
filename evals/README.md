@@ -74,6 +74,8 @@ On Groq's free tier, keep `--delay 2` (default) or higher. The runner also retri
 
 Judge model differs from the model under test to avoid self-preference bias.
 
+31 tasks; each task ≈ 3 points. Differences under ~10 points are within run-to-run variance.
+
 Tasks that end in an API error (e.g. a Groq daily-token 429) are excluded from every pass rate and listed as "errors: N (excluded)". Once the quota frees up, re-run only those tasks in place:
 
 ```bash
