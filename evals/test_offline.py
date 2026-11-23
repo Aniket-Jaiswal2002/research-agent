@@ -257,20 +257,39 @@ class ForcedPdfLLM(FakeLLM):
         return AIMessage(content="", tool_calls=[{"name": "pdf_search_tool", "args": {"query": q.lower()}, "id": f"f{self.n}"}])
 
 
+def _strip(text, pages=True, urls=True):
+    if pages:
+        text = re.sub(r"\(Source:[^)]*\)", "", text)
+    if urls:
+        text = re.sub(r"\[web\]\([^)]*\)", "", text)
+        text = re.sub(r"https?://[^\s\"'\]}]+", "", text)
+    return re.sub(r"[ \t]+\n", "\n", text).strip()
+
+
+class FixedAnswerLLM(FakeLLM):
+    """FakeLLM's search policy, but the final answer is a fixed string."""
+
+    def __init__(self, text, **kw):
+        super().__init__(**kw)
+        self.text = text
+
+    def invoke(self, messages):
+        r = super().invoke(messages)
+        return r if r.tool_calls else AIMessage(content=self.text)
+
+
 class NoCiteLLM(FakeLLM):
-    """Searches like FakeLLM but its final answer never cites anything."""
+    """Searches and answers like FakeLLM (so the answer overlaps the tool results) but cites nothing."""
 
     def invoke(self, messages):
         r = super().invoke(messages)
-        return r if r.tool_calls else AIMessage(content="The brief covers that topic.")
-
-
-class PageOnlyLLM(FakeLLM):
-    """Final answer cites a PDF page but no URL."""
-
-    def invoke(self, messages):
-        r = super().invoke(messages)
-        return r if r.tool_calls else AIMessage(content="Answer. (Source: helios7-brief.pdf, Page 3)")
+        if r.tool_calls:
+            return r
+        text = _strip(r.content)
+        ctx = " ".join(m.content for m in messages if isinstance(m, ToolMessage))
+        if "Example web result" in ctx and "Example web result" not in text:
+            text += " Example web result."  # the fake body is cut at 600 chars; keep the web content in the answer
+        return AIMessage(content=text)
 
 
 class Flaky400LLM(FakeLLM):
@@ -325,71 +344,107 @@ def test_v3():
     assert bound.kwargs.get("tool_choice") is None
     assert [t["function"]["name"] for t in forced_real.kwargs["tools"]] == ["pdf_search_tool", "web_search_tool"]
 
-    # ---- 2. citations ------------------------------------------------------------------------------
+    # ---- 2. citations: appended only for sources the answer actually overlaps with ----------------------
     nocite = lambda: (NoCiteLLM(False), NoCiteLLM(), ForcedPdfLLM())  # noqa: E731
     base = agent.run_agent(Q, version="v2", llm_pair=nocite())
-    assert base["answer"] == "The brief covers that topic.", "control: v2 leaves an uncited answer uncited"
+    assert "Sources:" not in base["answer"] and not cited_pages(base["answer"]), "control: v2 leaves it uncited"
 
-    r = run("v3", nocite())  # (a) PDF used, no page cited -> the pages actually retrieved are appended
-    retrieved = sorted({int(p) for s in r["steps"] if s["tool"] == "pdf_search_tool"
-                        for p in _re.findall(r"Page (\d+)\]", s["result"])})
-    assert retrieved and r["citations_appended"] == {"web": False, "pdf": True}, r["citations_appended"]
-    assert sorted(cited_pages(r["answer"])) == retrieved, (r["answer"], retrieved)
-    assert r["answer"].startswith("The brief covers that topic.\n\nSources:\n")
+    r = run("v3", nocite())  # (a) PDF used, no page cited -> the retrieved page(s) the answer overlaps are appended
+    retrieved = {int(p) for s in r["steps"] if s["tool"] == "pdf_search_tool" for p in _re.findall(r"Page (\d+)\]", s["result"])}
+    pages = cited_pages(r["answer"])
+    assert r["citations_appended"] == {"web": False, "pdf": True} and pages and pages <= retrieved, (r["answer"], retrieved)
+    assert "\n\nSources:\n" in r["answer"]
 
-    r = run("v3", nocite(), QW)  # (b) PDF + web used, nothing cited -> both appended in one block
-    assert r["citations_appended"] == {"web": True, "pdf": True}, r["citations_appended"]
-    assert "- https://example.com/news" in r["answer"] and r["answer"].count("Sources:") == 1
-
-    r = run("v3", (FakeLLM(False), PageOnlyLLM(), ForcedPdfLLM()), QW)  # (c) page cited, URL missing
+    web_ans = "Example web result about Toyota leadership."  # (b) answer drawn from the web result, no URL
+    r = run("v3", (FakeLLM(False), FixedAnswerLLM(web_ans), ForcedPdfLLM()), QW)
     assert r["citations_appended"] == {"web": True, "pdf": False}, r["citations_appended"]
-    assert r["answer"].count("(Source:") == 1, "the cited page must not be duplicated"
+    assert r["answer"] == web_ans + "\n\nSources:\n- https://example.com/news"
+
+    r = run("v3", (FakeLLM(False), FixedAnswerLLM(web_ans + " (Source: helios7-brief.pdf, Page 3)"), ForcedPdfLLM()), QW)
+    assert r["citations_appended"] == {"web": True, "pdf": False}, "page already cited -> only the URL is added"
+    assert r["answer"].count("(Source:") == 1
+
+    # (c) THE LIVE BUG: a web answer that happened to follow an irrelevant PDF search must not get PDF pages
+    unrelated = "The current chief executive officer is Kenta Kon, appointed in April."
+    r = run("v3", (FakeLLM(False), FixedAnswerLLM(unrelated), ForcedPdfLLM()), QW)
+    assert r["citations_appended"] == {"web": False, "pdf": False} and r["answer"] == unrelated, r["answer"]
 
     ok = (FakeLLM(False), FakeLLM(), ForcedPdfLLM())  # (d) already cited -> answer untouched
     ra, rb = run("v2", ok, QW), run("v3", (FakeLLM(False), FakeLLM(), ForcedPdfLLM()), QW)
     assert rb["citations_appended"] == {"web": False, "pdf": False} and rb["answer"] == ra["answer"]
 
     ap = agent.append_missing_citations  # (e) the helper in isolation
-    assert ap("ok, see page 3", ["[Source: f.pdf, Page 3]\nx"], []) == ("ok, see page 3", {"web": False, "pdf": False})
-    assert ap("ok, pp. 3-6", ["[Source: f.pdf, Page 3]\nx"], [])[1]["pdf"] is False
-    a, added = ap("ok", ["[Source: f.pdf, Page 3]\nt\n\n---\n\n[Source: f.pdf, Page 6]\nu\n\n[Source: f.pdf, Page 3]\nv"], [])
-    assert a == "ok\n\nSources:\n(Source: f.pdf, Page 3) (Source: f.pdf, Page 6)" and added["pdf"], a
-    web = ["[{'url': 'https://a.com/1', 'content': 'x https://inline.com/z'}, {'url': 'https://b.com', 'content': 'y'}]",
-           '[{"url": "https://a.com/1", "content": "dup"}, {"url": "https://c.com", "content": "z"}]']
-    a, added = ap("ok", [], web)
-    assert a == "ok\n\nSources:\n- https://a.com/1\n- https://b.com\n- https://c.com" and added["web"], a  # no dups, no inline links
-    many = ["[{'url': 'https://s%d.com', 'content': ''}]" % i for i in range(9)]
-    assert ap("ok", [], many)[0].count("\n- ") == agent.MAX_APPENDED_URLS
-    assert ap("see https://x.org", [], web) == ("see https://x.org", {"web": False, "pdf": False})
-    assert ap("ok", [], ["no urls in here"]) == ("ok", {"web": False, "pdf": False})
-    assert ap("ok", [], []) == ("ok", {"web": False, "pdf": False})
+    none = {"web": False, "pdf": False}
+    p3 = "[Source: f.pdf, Page 3]\nHelios-7 reaches a gravimetric energy density of 412 Wh/kg and a volumetric density"
+    p6 = "[Source: f.pdf, Page 6]\nRoadmap: Helios-8 targets 480 Wh/kg with silicon anodes by 2028"
+    pdf = [p3 + "\n\n---\n\n" + p6]
+    a, added = ap("The Helios-7 cell reaches a gravimetric energy density of 412 Wh/kg.", pdf, [])
+    assert a.endswith("\n\nSources:\n(Source: f.pdf, Page 3)") and added == {"web": False, "pdf": True}, a  # page 6 not used
+    assert ap("The current CEO of Toyota is Kenta Kon.", pdf, []) == ("The current CEO of Toyota is Kenta Kon.", none)
+    a, added = ap("Helios-8 targets 480 Wh/kg, Helios-7 reaches 412 Wh/kg.", pdf, [])
+    assert a.endswith("(Source: f.pdf, Page 3) (Source: f.pdf, Page 6)") and added["pdf"], a  # both pages used, no duplicates
+    assert ap("ok, see page 3", pdf, []) == ("ok, see page 3", none)
+    assert ap("The cell reaches 412 Wh/kg, pp. 3-6", pdf, [])[1] == none
+    assert ap("412", pdf, [])[1]["pdf"] is True, "a one-token answer needs one shared token"
+    assert ap("", pdf, []) == ("", none)
+    web = ["[{'url': 'https://a.com/1', 'content': 'Toyota names Kenta Kon as new CEO in April 2026'}, "
+           "{'url': 'https://b.com', 'content': 'Weather in Pune is sunny today'}]",
+           '[{"url": "https://a.com/1", "content": "dup of the first"}, {"url": "https://c.com", "content": "Kenta Kon leads Toyota"}]']
+    a, added = ap("The current CEO of Toyota is Kenta Kon.", [], web)
+    assert a == "The current CEO of Toyota is Kenta Kon.\n\nSources:\n- https://a.com/1\n- https://c.com", a  # unrelated b.com skipped, no dups
+    assert added == {"web": True, "pdf": False}
+    assert ap("Pune is sunny.", [], web[:1])[0].endswith("- https://b.com")
+    many = ["[{'url': 'https://s%d.com', 'content': 'Toyota Kenta Kon CEO'}]" % i for i in range(9)]
+    assert ap("Kenta Kon leads Toyota", [], many)[0].count("\n- ") == agent.MAX_APPENDED_URLS
+    assert ap("see https://x.org about Kenta Kon", [], web) == ("see https://x.org about Kenta Kon", none)
+    assert ap("Kenta Kon", [], ["no urls in here, Kenta Kon"]) == ("Kenta Kon", none)
+    assert ap("ok", [], []) == ("ok", none)
+    raw = ["garbage {'url': 'https://a.com/1' Kenta Kon Toyota not parseable"]
+    assert ap("Kenta Kon of Toyota", [], raw)[0].endswith("- https://a.com/1"), "unparseable results fall back to URL scraping"
 
-    # ---- 3. parse failures (model HTTP 400) --------------------------------------------------------
+    # ---- 3. parse failures (model HTTP 400): retry once, unforced runner, tool-free only with tool results ----
+    zero = {"retries": 0, "unforced_fallbacks": 0, "tool_free_fallbacks": 0, "static_fallbacks": 0}
+    rec = lambda **kw: {**zero, **kw}  # noqa: E731
+
     flaky = Flaky400LLM(fail_times=1)  # (a) one 400 in the loop -> the retry succeeds
     r = run("v3", (FakeLLM(False), flaky, ForcedPdfLLM()))
-    assert flaky.attempts == 2 and r["recovery"] == {"retries": 1, "tool_free_fallbacks": 0, "static_fallbacks": 0}, r["recovery"]
+    assert flaky.attempts == 2 and r["recovery"] == rec(retries=1), r["recovery"]
     assert r["answer"] and "Page" in r["answer"]
 
-    ff = ForcedPdfLLM(fail_times=1)  # (b) one 400 on the forced first call -> retry succeeds, still PDF-first
+    ff = ForcedPdfLLM(fail_times=1)  # (b) one 400 on the forced first call -> the retry succeeds, still PDF-first
     r = run("v3", (FakeLLM(False), FakeLLM(), ff))
-    assert ff.attempts == 2 and r["steps"][0]["tool"] == "pdf_search_tool" and r["recovery"]["retries"] == 1
+    assert ff.attempts == 2 and r["steps"][0]["tool"] == "pdf_search_tool" and r["recovery"] == rec(retries=1)
 
-    always = Flaky400LLM(fail_times=None)  # (c) 400 every time in the loop -> retry once, then tool-free answer
+    fa = ForcedPdfLLM(fail_times=None)  # (c) the forced call always 400s (the live "tool_choice mismatch") -> unforced runner
+    unforced = FakeLLM()
+    tool_free = FakeLLM(False)
+    r = run("v3", (tool_free, unforced, fa))
+    assert fa.attempts == 2, "forced call: one try plus one retry"
+    assert r["recovery"] == rec(retries=1, unforced_fallbacks=1), r["recovery"]
+    assert unforced.n >= 2 and tool_free.n == 0, "the unforced runner takes over; the tool-free runner is not needed"
+    assert r["steps"] and r["answer"] != agent.PARSE_FAILURE_ANSWER and "Page" in r["answer"]
+
+    always = Flaky400LLM(fail_times=None)  # (d) 400 every time AFTER a tool result exists -> tool-free final answer
     r = run("v3", (FakeLLM(False), always, ForcedPdfLLM()))
     assert always.attempts == 2, "exactly one retry"
-    assert r["recovery"] == {"retries": 1, "tool_free_fallbacks": 1, "static_fallbacks": 0}, r["recovery"]
-    assert r["answer"] and r["answer"] != agent.PARSE_FAILURE_ANSWER and [s["tool"] for s in r["steps"]] == ["pdf_search_tool"]
+    assert r["recovery"] == rec(retries=1, tool_free_fallbacks=1), r["recovery"]
+    assert r["answer"] != agent.PARSE_FAILURE_ANSWER and [s["tool"] for s in r["steps"]] == ["pdf_search_tool"] and "Page" in r["answer"]
 
-    r = run("v3", (Flaky400LLM(fail_times=None), FakeLLM(), ForcedPdfLLM(fail_times=None)))  # (d) first call never works
-    assert r["steps"] == [] and r["recovery"]["tool_free_fallbacks"] == 1 and r["answer"], r
+    tf = FakeLLM(False)  # (e) first call fails on both runners: NO tool-free call (it would 400 too), fixed message
+    r = run("v3", (tf, Flaky400LLM(fail_times=None), ForcedPdfLLM(fail_times=None)))
+    assert tf.n == 0, "a tool-free call cannot recover a first call, so it must not be attempted"
+    assert r["answer"] == agent.PARSE_FAILURE_ANSWER and r["steps"] == []
+    assert r["recovery"] == rec(retries=2, unforced_fallbacks=1, static_fallbacks=1), r["recovery"]
+    assert r["citations_appended"] == {"web": False, "pdf": False}
 
-    r = run("v3", (Flaky400LLM(fail_times=None), Flaky400LLM(fail_times=None), ForcedPdfLLM()))  # (e) nothing works: no crash
-    assert r["answer"] == agent.PARSE_FAILURE_ANSWER, r["answer"]
-    assert r["recovery"]["static_fallbacks"] == 1 and r["citations_appended"] == {"web": False, "pdf": False}
+    r = run("v3", (Flaky400LLM(fail_times=None), Flaky400LLM(fail_times=None), ForcedPdfLLM()))  # (f) nothing works after a tool result
+    assert r["answer"] == agent.PARSE_FAILURE_ANSWER and r["steps"], "the pdf step happened, then everything 400ed"
+    assert r["recovery"] == rec(retries=2, tool_free_fallbacks=1, static_fallbacks=1), r["recovery"]
+    assert r["citations_appended"] == {"web": False, "pdf": False}, "no citations on the fixed message"
 
-    one = Flaky400LLM(fail_times=1, can_call_tools=False)  # (f) the budget-exhausted final answer also retries
+    one = Flaky400LLM(fail_times=1, can_call_tools=False)  # (g) the budget-exhausted final answer also retries
     r = run("v3", (one, FakeLLM(), ForcedPdfLLM()), QLOOP)
-    assert r["hit_iteration_budget"] and one.attempts == 2 and r["recovery"]["retries"] == 1 and r["answer"]
+    assert r["hit_iteration_budget"] and one.attempts == 2 and r["recovery"] == rec(retries=1) and r["answer"]
 
     # controls and boundaries
     assert raises(BadRequestError, "v2", (FakeLLM(False), Flaky400LLM(fail_times=None), ForcedPdfLLM())), "control: v2 crashes"

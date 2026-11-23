@@ -10,10 +10,16 @@ Three loop versions exist so the eval suite can show a before/after:
   v3 — v2 plus guardrails enforced in code, not by asking the model nicely:
        * PDF-first: the first LLM call is made with tool_choice=pdf_search_tool;
        * citations: if the answer cites no URL after a web search, or no page after a
-         PDF search, a "Sources:" block built from the tool results is appended;
-       * parse failures: a model HTTP 400 (output_parse_failed, ...) is retried once, then
-         the loop falls back to a tool-free final answer instead of crashing.
+         PDF search, a "Sources:" block is appended, but only for tool results the answer
+         actually overlaps with (never a page or URL it did not use);
+       * parse failures: a model HTTP 400 (output_parse_failed, tool_use_failed, ...) is
+         retried once, the forced first call falls back to the unforced runner, and only then
+         (and only if tool results exist) a tool-free final answer, else a fixed message.
+         It never crashes.
 """
+import ast
+import json
+import math
 import os
 import re
 import time
@@ -66,7 +72,6 @@ _MODEL_400_RE = re.compile(r"BadRequestError|Error code: 400|output_parse_failed
 _URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
 _URL_FIELD_RE = re.compile(r"""['"]url['"]\s*:\s*['"](https?://[^'"]+)['"]""")
 _PAGE_CITED_RE = re.compile(r"\b(?:pages?|pp?\.)\s*\d", re.I)
-_PDF_SOURCE_RE = re.compile(r"\[Source: ([^,\]]+), Page (\d+)\]")
 MAX_APPENDED_URLS = 5
 
 
@@ -74,32 +79,79 @@ def is_model_400(exc: Exception) -> bool:
     return getattr(exc, "status_code", None) == 400 or bool(_MODEL_400_RE.search(f"{type(exc).__name__}: {exc}"))
 
 
+# A retrieved page / web result only counts as a source if the answer actually overlaps with it.
+_PDF_CHUNK_RE = re.compile(r"\[Source: ([^,\]]+), Page (\d+)\]\n?(.*?)(?=\n\n---\n\n\[Source:|\Z)", re.S)
+_TOKEN_RE = re.compile(r"[a-z0-9]+(?:[-.][a-z0-9]+)*")
+_STOPWORDS = frozenset("""this that with from have which there their about into also than then they were been will would
+could should these those what when where while your more most some such only other over under after before because between
+both each page pages source sources brief pdf cited using used uses answer based according mentioned document provided
+information available however therefore""".split())
+MIN_SHARED_TOKENS = 3
+
+
+def _content_tokens(text: str) -> set:
+    """Distinctive tokens: words of 4+ letters, or tokens with a digit (2+ chars): 'helios-7', '412', 'lpsc-9'."""
+    return {t for t in _TOKEN_RE.findall(text.lower())
+            if t not in _STOPWORDS and (len(t) >= 4 or (len(t) >= 2 and any(c.isdigit() for c in t)))}
+
+
+def _supports(answer_tokens: set, text: str) -> bool:
+    """True if the answer shares enough distinctive tokens with `text` (a PDF chunk or a web result).
+
+    Needs min(3, half the answer's tokens, all of the text's tokens) shared tokens, and at least one.
+    """
+    item = _content_tokens(text)
+    if not answer_tokens or not item:
+        return False
+    need = min(MIN_SHARED_TOKENS, max(1, math.ceil(len(answer_tokens) / 2)), len(item))
+    return len(answer_tokens & item) >= need
+
+
+def _web_items(raw: str) -> list:
+    """[(url, text)] from a web tool result: a JSON or Python-repr list of {"url", "content"} dicts."""
+    for load in (json.loads, ast.literal_eval):
+        try:
+            data = load(raw)
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            data = data.get("results", [data])
+        if isinstance(data, list):
+            items = [(d["url"], str(d.get("content", ""))) for d in data if isinstance(d, dict) and d.get("url")]
+            if items:
+                return items
+    # unparseable: judge each URL against the whole result text
+    return [(u.rstrip(".,;"), raw) for u in (_URL_FIELD_RE.findall(raw) or _URL_RE.findall(raw))]
+
+
 def append_missing_citations(answer: str, pdf_results: list, web_results: list):
     """Append a "Sources:" block for what the answer failed to cite. Returns (answer, {"web", "pdf"}).
 
-    Built only from tool results that were actually returned: URLs from the web tool, and the
-    (file, page) pairs the PDF tool actually retrieved. It guarantees a citation is PRESENT; it
-    cannot know which retrieved page the answer really used.
+    Only SUPPORTED sources are appended: a retrieved PDF page or a web result is listed only if the
+    answer shares distinctive tokens with its text (see _supports). A web answer that merely came
+    after an irrelevant PDF search is therefore not given PDF pages, and vice versa. When nothing is
+    supported nothing is appended: no citation is better than a wrong one.
     """
+    answer_tokens = _content_tokens(answer)
     lines, added = [], {"web": False, "pdf": False}
     if web_results and not _URL_RE.search(answer):
         urls = []
-        for r in web_results:
-            for u in (_URL_FIELD_RE.findall(r) or _URL_RE.findall(r)):
-                u = u.rstrip(".,;")
-                if u not in urls:
-                    urls.append(u)
+        for raw in web_results:
+            for url, text in _web_items(raw):
+                if url not in urls and _supports(answer_tokens, text):
+                    urls.append(url)
         if urls:
             lines += [f"- {u}" for u in urls[:MAX_APPENDED_URLS]]
             added["web"] = True
     if pdf_results and not _PAGE_CITED_RE.search(answer):
-        seen = []
-        for r in pdf_results:
-            for src, page in _PDF_SOURCE_RE.findall(r):
-                if (src, int(page)) not in seen:
-                    seen.append((src, int(page)))
-        if seen:
-            lines.append(" ".join(f"(Source: {s}, Page {p})" for s, p in seen))
+        pages = []
+        for raw in pdf_results:
+            for m in _PDF_CHUNK_RE.finditer(raw):
+                key = (m.group(1), int(m.group(2)))
+                if key not in pages and _supports(answer_tokens, m.group(3)):
+                    pages.append(key)
+        if pages:
+            lines.append(" ".join(f"(Source: {s}, Page {p})" for s, p in pages))
             added["pdf"] = True
     if lines:
         answer = answer.rstrip() + "\n\nSources:\n" + "\n".join(lines)
@@ -144,7 +196,7 @@ def run_agent(question: str, model: str = DEFAULT_MODEL, version: str = DEFAULT_
 
     steps, tokens = [], {"input": 0, "output": 0}
     raw_results = {"pdf_search_tool": [], "web_search_tool": []}  # untruncated results of executed calls
-    recovery = {"retries": 0, "tool_free_fallbacks": 0, "static_fallbacks": 0}
+    recovery = {"retries": 0, "unforced_fallbacks": 0, "tool_free_fallbacks": 0, "static_fallbacks": 0}
     llm_calls = 0
     t0 = time.perf_counter()
 
@@ -176,23 +228,39 @@ def run_agent(question: str, model: str = DEFAULT_MODEL, version: str = DEFAULT_
         messages.append(resp)
         return resp
 
-    def call(runner):
-        """One LLM call. v3: on a model 400 retry once, then fall back to a tool-free final answer."""
+    def call(runners):
+        """One LLM call. `runners` are tried in order; v1/v2 only ever use the first.
+
+        v3 recovery ladder on a model 400 (Groq rejects the model's own output):
+          1. each runner gets one retry;
+          2. then the next runner (the forced first call falls back to the unforced one);
+          3. when every runner failed: a tool-free final answer, but only if tool results already
+             exist (without any, the model just tries to call a tool again and 400s: a tool-free
+             call cannot recover a first call), otherwise a fixed message. Never a crash.
+        """
         if not v3:
-            return invoke(runner)
-        for attempt in range(2):
-            try:
-                return invoke(runner)
-            except Exception as e:
-                if not is_model_400(e):
-                    raise
-                if attempt == 0:
-                    recovery["retries"] += 1
-        recovery["tool_free_fallbacks"] += 1
-        return final_answer()
+            return invoke(runners[0])
+        for i, runner in enumerate(runners):
+            for attempt in range(2):
+                try:
+                    return invoke(runner)
+                except Exception as e:
+                    if not is_model_400(e):
+                        raise
+                    if attempt == 0:
+                        recovery["retries"] += 1
+            if i + 1 < len(runners):
+                recovery["unforced_fallbacks"] += 1
+        if any(isinstance(m, ToolMessage) for m in messages):
+            recovery["tool_free_fallbacks"] += 1
+            return final_answer()
+        recovery["static_fallbacks"] += 1
+        resp = AIMessage(content=PARSE_FAILURE_ANSWER)
+        messages.append(resp)
+        return resp
 
     forced_pdf_first = v3 and llm_force_pdf is not None
-    response = call(llm_force_pdf if forced_pdf_first else llm_with_tools)
+    response = call([llm_force_pdf, llm_with_tools] if forced_pdf_first else [llm_with_tools])
     iteration = 0
     seen = set()
     hit_budget = False
@@ -223,7 +291,7 @@ def run_agent(question: str, model: str = DEFAULT_MODEL, version: str = DEFAULT_
                 print(f"  -> {name}({args}) dup={duplicate}")
             messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
 
-        response = call(llm_with_tools)
+        response = call([llm_with_tools])
 
     if response.tool_calls:
         hit_budget = True
