@@ -7,6 +7,7 @@
   "n_tasks": 31,
   "n_total": 31,
   "pass_rate_deterministic": 0.7741935483870968,
+  "pass_rate_excl_citations": 0.8064516129032258,
   "pass_rate": 0.7741935483870968,
   "judged": false,
   "by_category": {

@@ -72,6 +72,16 @@ def deterministic_pass(row):
     return all(v for k, v in row["checks"].items() if v is not None and k != "grounded")
 
 
+# Checks that agent v3 satisfies in code (it appends citations), so they can rise without better answers.
+CITATION_CHECKS = {"cites_source", "web_cited", "correct_page_cited"}
+
+
+def pass_excluding_citations(row):
+    """Pass computed from every applicable check except the citation checks and the judge's 'grounded'."""
+    return all(v for k, v in row["checks"].items()
+               if v is not None and k != "grounded" and k not in CITATION_CHECKS)
+
+
 def error_class(row):
     """None, "infra" (excluded from rates) or "model" (counts as a failure)."""
     return classify_error(row.get("error"))
@@ -102,6 +112,8 @@ def summarise(rows, meta):
         "n_total": n_total,            # tasks that have a row at all
         # deterministic = every check except the judge's 'grounded'; used to compare v1 vs v2
         "pass_rate_deterministic": sum(deterministic_pass(r) for r in rows) / max(1, len(rows)),
+        # deterministic minus the citation checks: the fair row for comparing v3 (which appends citations) with v1/v2
+        "pass_rate_excl_citations": sum(pass_excluding_citations(r) for r in rows) / max(1, len(rows)),
         # incl. judge = deterministic AND grounded; only meaningful when the run had a judge
         "pass_rate": sum(r["passed"] for r in rows) / max(1, len(rows)),
         "judged": bool(meta.get("judge")),

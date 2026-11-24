@@ -163,18 +163,19 @@ research-agent/
 ResearchMind ships with a 31-task eval suite ([`evals/`](evals/README.md)) built on a **fictional** PDF. The model can't answer from memory, so every correct answer has to come from retrieval. It checks tool selection, retrieval hit rate, page citations, fact accuracy, hallucination on unanswerable questions, tool-call loops and prompt injection.
 
 <!-- Numbers come from evals/RESULTS.md (python evals/report.py evals/runs/*/summary.json) -->
-| Metric | gpt-oss-20b · v1 | gpt-oss-20b · v2 | gpt-oss-120b · v2 |
-|---|---|---|---|
-| **Pass rate (deterministic)** | **77%** (24/31) | **76%** (22/29) | **87%** (27/31) |
-| Pass rate incl. LLM judge | – | 69% | 81% |
-| Groundedness (judge: qwen3.8-27b) | – | 88% | 93% |
-| Retrieval hit | 100% | 89% | 100% |
-| Correct page cited | 100% | 84% | 95% |
-| Abstains when unanswerable | 0% | 67% | 100% |
-| Resists prompt injection | 100% | – | 100% |
-| Latency p50 / p95 | 14.2s / 51.8s | 12.9s / 78.1s | 2.5s / 103.1s |
+| Metric | gpt-oss-20b · v1 | gpt-oss-20b · v2 | gpt-oss-120b · v2 | gpt-oss-20b · v3 |
+|---|---|---|---|---|
+| **Pass rate (deterministic)** | **77%** (24/31) | **76%** (22/29) | **87%** (27/31) | **90%** (28/31) |
+| Pass rate excl. the 3 citation checks | 81% | 86% | 94% | 90% |
+| Pass rate incl. LLM judge | – | 69% | 81% | 87% |
+| Groundedness (judge: qwen3.8-27b) | – | 88% | 93% | 96% |
+| Retrieval hit | 100% | 89% | 100% | 100% |
+| Correct page cited † | 100% | 84% | 95% | 100% |
+| Abstains when unanswerable | 0% | 67% | 100% | 67% |
+| Resists prompt injection | 100% | – | 100% | 100% |
+| Latency p50 / p95 | 14.2s / 51.8s | 12.9s / 78.1s | 2.5s / 103.1s | 11.4s / 62.6s |
 
-31 tasks; each task ≈ 3 points, so differences under ~10 points are within run-to-run variance. "–": not measured (v2's two injection tasks hit Groq's daily token limit and are excluded, as all API outages are; the 120b run had one model error, `web-04`, which counts as a failure). Both models are on Groq; the judge is a different model from the one under test. Details: [`evals/RESULTS.md`](evals/RESULTS.md), [`evals/SCORER_CHANGELOG.md`](evals/SCORER_CHANGELOG.md).
+31 tasks, one run per column; each task ≈ 3 points, so differences under ~10 points are within run-to-run variance. "–": not measured (v2's two injection tasks hit Groq's daily token limit and are excluded, as all API outages are; the 120b run had one model error, `web-04`, which counts as a failure). All models are on Groq; the judge is a different model from the one under test. † **v3 appends citations in code**, so `cites_source`, `web_cited` and `correct_page_cited` are not evidence of better answers; compare v3 on the "excl. citation checks" row. Details: [`evals/RESULTS.md`](evals/RESULTS.md), [`evals/SCORER_CHANGELOG.md`](evals/SCORER_CHANGELOG.md).
 
 **What the evals found:**
 - **v1 returned empty answers** when it used up its 6 tool rounds (abstention 0%, completion 90%). v2 fixes that: abstention 67% and no empty answers (completion 100%). It does not stop loops: `loop-01` ("tell me everything") still blows the tool-call budget in every run.
@@ -182,6 +183,9 @@ ResearchMind ships with a 31-task eval suite ([`evals/`](evals/README.md)) built
 - **The first scorer was too strict.** It rejected correct answers written with a non-breaking hyphen (`LPSC‑9`), `kg⁻¹` instead of `kg/`, or "Page 3 & 6". Fixing that moved v1 from 61% to 77%; the before/after for every run is in the changelog.
 - **The remaining misses are behavioural, not retrieval:** retrieval hit is 89–100%. The common failures are calling the web tool before the PDF, dropping URLs from web citations, and looping on "tell me everything".
 - **The bigger model scores higher** (87%) and abstains correctly every time, but produced one malformed tool call that Groq rejected (`output_parse_failed`).
+- **v3 (guardrails in code) scored 90% (28/31) vs v2's 76% (22/29), but most of that gap is the citation code, not better answers.** Without the three citation checks v3 is 90% and v2 86%: about one task, inside the noise band. v3 appended a `Sources:` block on 9 tasks, and that block alone decided pass/fail on two of them (`mixed-02`, `mixed-03`); three of the nine were on unanswerable questions, where listing sources next to "not found" is noise. These are single runs.
+- **Forcing PDF-first with `tool_choice` works, but not always.** It was used on all 31 tasks, yet Groq returned a 400 on the forced first call for 3 of them (10%). One recovered on retry; two fell back to the unforced runner, and one of those (`pdf-09`) then called the web first. So `first_tool` is 97% for v3, the same as v1.
+- **What v3 did not move:** abstention is still 67% (`abstain-01` still fails), and `loop-01` still fails (`no_duplicate_calls`). Facts and retrieval hit went from 89% to 100% versus v2 (two tasks); v3's code doesn't control either, so I'd treat that as variance until the runs are repeated.
 
 ---
 

@@ -136,6 +136,7 @@ def test_error_policy_and_rerun():
     trace_path = os.path.join(run_dir, "traces.jsonl")
 
     assert (s["errors"], s["model_errors"]) == (1, 1), s
+    assert s["pass_rate_deterministic"] <= s["pass_rate_excl_citations"] <= 1, "dropping checks can only raise the rate"
     assert s["errored_ids"] == ["pdf-02"] and s["model_error_ids"] == ["web-02"], s
     assert (s["n_tasks"], s["n_total"]) == (30, 31), (s["n_tasks"], s["n_total"])  # only the infra error is dropped
     assert "web-02" in s["failed_ids"], "a model error must count as a failure"

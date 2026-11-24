@@ -1,0 +1,8 @@
+{
+  "run_id": "20261124-060956_openai-gpt-oss-20b_v3",
+  "model": "openai/gpt-oss-20b",
+  "agent_version": "v3",
+  "judge": "qwen/qwen3.8-27b",
+  "scorer_version": 3,
+  "n_expected": 31
+}

@@ -20,6 +20,7 @@ def main(paths):
     # Compare v1 vs v2 on the deterministic rate only; groundedness (judge) is reported separately.
     row("**Pass rate (deterministic)**", lambda r: f"**{r['pass_rate_deterministic']:.0%}**")
     row("Passed / scored", lambda r: f"{round(r['pass_rate_deterministic'] * r['n_tasks'])} / {r['n_tasks']}")
+    row("Pass rate excl. citation checks", lambda r: f"{r['pass_rate_excl_citations']:.0%}" if "pass_rate_excl_citations" in r else "–")
     row("Pass rate (incl. judge)", lambda r: f"{r['pass_rate']:.0%}" if r.get("judged") else "–")
     row("Judge model", lambda r: r.get("judge") or "–")
     cats = sorted({c for r in runs for c in r["by_category"]})
@@ -50,6 +51,10 @@ def main(paths):
             "it is reported separately and only exists for judged runs. "
             + (f"Judge model(s): {', '.join(f'`{j}`' for j in judges)}; each differs from the model under test."
                if judges else "No run here used a judge."),
+            "- **Pass rate excl. citation checks** drops `cites_source`, `web_cited` and `correct_page_cited`."
+            + (" **Agent v3 appends citations in code, so those three checks rise without the answers improving: "
+               "compare v3 with v1/v2 on this row and on the accuracy checks (`facts`, `retrieval_hit`, `abstained`), "
+               "not on the citation checks.**" if any(r.get("agent_version") == "v3" for r in runs) else ""),
             "- **Infra errors** (429, 5xx, timeouts, ...) are excluded from every rate; **model errors** "
             "(HTTP 400 such as `output_parse_failed`) count as failures. See `evals/README.md`.",
             "- 31 tasks; each task ≈ 3 points. Differences under ~10 points are within run-to-run variance.",
