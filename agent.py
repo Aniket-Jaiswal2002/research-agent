@@ -32,7 +32,7 @@ from tools import pdf_search_tool, web_search_tool
 load_dotenv()
 
 DEFAULT_MODEL = os.getenv("RM_MODEL", "openai/gpt-oss-20b")
-DEFAULT_VERSION = os.getenv("RM_AGENT_VERSION", "v1")
+DEFAULT_VERSION = os.getenv("RM_AGENT_VERSION", "v3")
 MAX_ITERATIONS = 6
 
 TOOLS = {"pdf_search_tool": pdf_search_tool, "web_search_tool": web_search_tool}

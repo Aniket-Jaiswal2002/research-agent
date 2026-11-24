@@ -17,6 +17,7 @@ import numpy as np
 os.environ.setdefault("GROQ_API_KEY", "offline")
 os.environ.setdefault("TAVILY_API_KEY", "offline")
 os.environ["RM_MODEL"] = "openai/gpt-oss-20b"  # the tests name run folders after the default model
+os.environ["RM_AGENT_VERSION"] = "v3"           # ...and a real .env may pin another agent version
 
 
 # ── stub fastembed with a bag-of-words hashing embedder ───────────────
@@ -325,6 +326,12 @@ def test_v3():
         except exc_type:
             return True
         return False
+
+    # ---- 0. v3 is the default version (nothing passes version=) -------------------------------------
+    assert 'os.getenv("RM_AGENT_VERSION", "v3")' in open(agent.__file__, encoding="utf-8").read(), "code default is v3"
+    assert agent.DEFAULT_VERSION == "v3"
+    r = agent.run_agent(Q, llm_pair=(FakeLLM(False), WebFirstLLM(), ForcedPdfLLM()))  # no version argument
+    assert r["agent_version"] == "v3" and r["steps"][0]["tool"] == "pdf_search_tool" and r["forced_pdf_first"] is True
 
     # ---- 1. PDF-first is enforced by tool_choice, not by the prompt --------------------------------
     r2 = run("v2", (FakeLLM(False), WebFirstLLM(), ForcedPdfLLM()))
