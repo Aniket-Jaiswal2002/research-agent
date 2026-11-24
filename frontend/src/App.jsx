@@ -4,6 +4,11 @@ import ReactMarkdown from "react-markdown";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+// No response at all (connection refused, DNS failure, timeout) means the backend is not running.
+// An HTTP error response means it is running but the request failed.
+const OFFLINE_MSG = "Backend offline. Run locally with Docker (see README).";
+const isOffline = (err) => !err.response;
+
 export default function App() {
   const [messages, setMessages] = useState([
     {
@@ -16,6 +21,7 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [pdfs, setPdfs] = useState([]);
   const [activePdf, setActivePdf] = useState(null);
+  const [backendOffline, setBackendOffline] = useState(false);
   const bottomRef = useRef(null);
   const fileRef = useRef(null);
 
@@ -32,8 +38,9 @@ export default function App() {
       const res = await axios.get(`${API}/status`);
       setPdfs(res.data.pdfs || []);
       setActivePdf(res.data.active_pdf);
+      setBackendOffline(false);
     } catch (err) {
-      console.log("Backend not ready yet");
+      setBackendOffline(isOffline(err));
     }
   };
 
@@ -77,7 +84,10 @@ export default function App() {
     } catch (err) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "❌ Failed to upload PDF. Please try again." },
+        {
+          role: "assistant",
+          content: isOffline(err) ? `⚠️ ${OFFLINE_MSG}` : "❌ Failed to upload PDF. Please try again.",
+        },
       ]);
     } finally {
       setUploading(false);
@@ -101,7 +111,10 @@ export default function App() {
     } catch (err) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "❌ Something went wrong. Please try again." },
+        {
+          role: "assistant",
+          content: isOffline(err) ? `⚠️ ${OFFLINE_MSG}` : "❌ Something went wrong. Please try again.",
+        },
       ]);
     } finally {
       setLoading(false);
@@ -174,7 +187,7 @@ export default function App() {
           <div style={styles.feature}>🔍 Semantic PDF search</div>
           <div style={styles.feature}>🌐 Live web search</div>
           <div style={styles.feature}>📌 Cited answers</div>
-          <div style={styles.feature}>⚡ Powered by LLaMA 3.3</div>
+          <div style={styles.feature}>⚡ Powered by Groq</div>
         </div>
 
         <div style={styles.sidebarFooter}>Built by Aniket Jaiswal</div>
@@ -191,6 +204,8 @@ export default function App() {
           </div>
           <div style={styles.statusDot(!!activePdf)} />
         </div>
+
+        {backendOffline && <div style={styles.offlineBanner}>⚠️ {OFFLINE_MSG}</div>}
 
         <div style={styles.messages}>
           {messages.map((msg, i) => (
@@ -253,6 +268,13 @@ export default function App() {
 }
 
 const styles = {
+  offlineBanner: {
+    padding: "10px 24px",
+    background: "#451a1a",
+    color: "#fecaca",
+    borderBottom: "1px solid #7f1d1d",
+    fontSize: 14,
+  },
   root: {
     display: "flex",
     height: "100vh",
