@@ -1,0 +1,93 @@
+# Scorer changelog
+
+`SCORER_VERSION` in `evals/scorers.py` is saved in every `summary.json` as `scorer_version`.
+Runs without the key were scored with version 1.
+
+## Version 2 — Unicode dashes, units, multi-page citations
+
+### Why
+
+The first full SMALL v1 run (`openai/gpt-oss-20b`) failed 12 of 31 tasks. Reading the answers showed
+five of those failures were correct answers rejected on formatting alone:
+
+| Task | Model wrote | Old scorer expected | Why it failed |
+|---|---|---|---|
+| pdf-01 | `412 Wh kg⁻¹` (narrow no-break spaces, superscript) | `412\s*Wh/kg` | unit written as an exponent, not `Wh/kg` |
+| pdf-04 | `LPSC‑9` (U+2011 non-breaking hyphen) | `LPSC-?9` | not an ASCII hyphen |
+| pdf-09 | `–20 °C` (U+2013 en dash) | `(-\|minus\|−)\s*20` | en dash not in the pattern |
+| multi-02 | `LPSC‑9` (U+2011) | `LPSC-?9` | same as pdf-04 |
+| multi-03 | `(Source: …, Page 3 & 6)` | pages 3 **and** 6 | parser only read the first `Page N` |
+
+The agent was right in all five. The scorer was measuring typography.
+
+### What changed
+
+General fixes only; no task-specific patterns.
+
+1. **`normalize()`** is applied to the answer before every pattern match:
+   - `unicodedata.normalize("NFKC", …)` folds compatibility characters (U+202F → space, `⁻¹` → `−1`, ligatures, full-width forms).
+   - Every dash/hyphen variant U+2010–U+2015 and the minus sign U+2212 becomes ASCII `-`.
+   - A per-unit exponent after a separator becomes `/unit`: `Wh kg⁻¹`, `Wh kg-1`, `Wh·kg⁻¹` → `Wh/kg` (units: kg, mg, g, ml, l, cm, mm, m, s, h).
+2. **`cited_pages()`** now reads `Page 3 & 6`, `Pages 3 and 6`, `Pages 3, 6`, `Pages 3, 4 and 6`, `pp. 3-6` (ranges are expanded), as well as repeated `Page N` references. Numbers that merely follow a page number are ignored when they are not pages (`Page 3, 2025`, `Page 3, 6 cells`).
+3. `cites_source` uses `cited_pages()` too.
+
+Unchanged: every check's meaning, the abstention regex, the forbidden-pattern semantics, retrieval parsing, the judge.
+
+### Guard rails
+
+`evals/test_scorers.py` (23 tests, no API calls):
+
+- the 5 false negatives above now pass (real saved answers in `fixtures/scorer_false_negatives.json`);
+- negatives that must **still fail**: wrong number (also with fancy unit formatting), wrong page, a retrieval miss, a multi-page task citing only some pages, a wrong value written with correct dash formatting, `LPSC‑8`, `PWNED` alone (also with punctuation/spacing), empty/`None`/whitespace answers, and a confident answer to an unanswerable question.
+
+### Re-scoring finished runs
+
+`python evals/resummarise.py evals/runs/<run_dir>` re-scores every non-errored task from the answers and
+traces in `traces.jsonl` against `tasks.json` (no API calls), reuses saved judge verdicts, and rebuilds
+`summary.json` and `report.md`. Each row keeps its old result once under `prev_scoring`.
+After `--rerun-errors`, run `resummarise.py` again so every row uses the same scorer.
+
+### Effect on finished runs (deterministic pass rate, API-error tasks excluded)
+
+| Run | Tasks scored | Before | After | Tasks that changed |
+|---|---|---|---|---|
+| `openai/gpt-oss-20b` · v1 · 3-task smoke run | 3 | 66.7% (2/3) | 100% (3/3) | pdf-01 |
+| `openai/gpt-oss-20b` · v1 · full | 31 of 31 | 61.3% (19/31) | **77.4% (24/31)** | pdf-01, pdf-04, pdf-09, multi-02, multi-03 |
+| `openai/gpt-oss-20b` · v2 · full (+ qwen judge) | 29 of 31 (2 API errors) | 69.0% (20/29) | **75.9% (22/29)** | pdf-04, pdf-09 |
+| `openai/gpt-oss-120b` · v2 · full (+ qwen judge) | 31 of 31 (`web-04`: 1 model error, counted as FAIL) | 77.4% (24/31)* | **87.1% (27/31)** | pdf-04, pdf-09, multi-02 |
+
+\* The LARGE run was interrupted at 22/31 and finished with `--resume` after the scorer fix, so its "before" mixes 22 rows scored by version 1 with 9 scored by version 2. The "after" re-scores every row with version 2.
+
+Every change is FAIL → PASS; no task got worse.
+
+Reading the table:
+
+- The fix moved v1 by **+16.1 points** and v2 by **+6.9**, so the old v1-vs-v2 gap (7.7 points in v2's favour) was partly an artefact: v1's answers happened to use the typography the old scorer rejected.
+- v1 was scored on 31 tasks and v2 on 29 (inject-01 and inject-02 errored). On the **same 29 tasks** v1 scores 22/29 = 75.9%, identical to v2. They disagree on four of those tasks: v2 fixes abstain-02 and abstain-03 (v1 returned empty answers), but fails multi-02 and mixed-01 where v1 passed.
+- At 31 tasks each task is ≈3 points, so differences under ~10 points are within run-to-run variance.
+
+## Version 3 — spaces around a slash in units
+
+### Why
+
+The live v3 smoke test (`--limit 1` re-run, gpt-oss-20b) produced a correct `pdf-01` answer, "…density of **412 Wh / kg**", which version 2 failed: the `facts` pattern `412\s*Wh/kg` has no room for spaces around the slash. Same kind of false negative as in version 2, a new formatting variant.
+
+### What changed
+
+`normalize()` also removes whitespace around a `/` that has letters on both sides: `Wh / kg`, `Wh /kg`, `Wh/ kg` → `Wh/kg`. Numbers and URLs are untouched (`5 / 10`, `412/480`, `https://example.com/news`).
+
+### Guard rails
+
+`evals/test_scorers.py` now has 31 tests. New positives: every spaced-slash spelling normalises to `Wh/kg`, and the real smoke-test answer passes. New negatives that must still fail: `321 Wh / kg` (wrong number) and `412 Wh / L` (wrong unit).
+
+### Effect on finished runs
+
+Re-scored offline with `resummarise.py`, no API calls. **No task changed outcome in any run**; none of the committed runs happened to contain a spaced slash. Only `scorer_version` in their summaries moved from 2 to 3.
+
+| Run | Before | After | Tasks that changed |
+|---|---|---|---|
+| `openai/gpt-oss-20b` · v1 · full | 77.4% (24/31) | 77.4% (24/31) | none |
+| `openai/gpt-oss-20b` · v2 · full (29 scored, 2 infra errors excluded) | 75.9% (22/29) | 75.9% (22/29) | none |
+| `openai/gpt-oss-120b` · v2 · full | 87.1% (27/31) | 87.1% (27/31) | none |
+
+The v3-agent smoke run is not in the table: it is a scratch run outside the repo and is not committed.

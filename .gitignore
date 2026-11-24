@@ -4,3 +4,10 @@ __pycache__/
 *.pyc
 vector_store/
 *.pdf
+# eval fixture is generated but committed so results are reproducible
+!evals/fixtures/*.pdf
+
+# eval runs: only the complete runs are committed (not the --limit 3 smoke run, backups or temp files)
+evals/runs/20261123-084145_openai-gpt-oss-20b_v1/
+evals/runs_backup*/
+evals/runs/**/*.tmp
