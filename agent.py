@@ -26,6 +26,7 @@ import time
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from abstain import is_abstention
 from tools import pdf_search_tool, web_search_tool
 
 load_dotenv()
@@ -130,8 +131,12 @@ def append_missing_citations(answer: str, pdf_results: list, web_results: list):
     Only SUPPORTED sources are appended: a retrieved PDF page or a web result is listed only if the
     answer shares distinctive tokens with its text (see _supports). A web answer that merely came
     after an irrelevant PDF search is therefore not given PDF pages, and vice versa. When nothing is
-    supported nothing is appended: no citation is better than a wrong one.
+    supported nothing is appended: no citation is better than a wrong one. An abstention ("could not
+    find", "not mentioned", ... the scorer's ABSTAIN_RE) gets no Sources block at all: listing sources
+    next to "not found" is noise.
     """
+    if is_abstention(answer):
+        return answer, {"web": False, "pdf": False}
     answer_tokens = _content_tokens(answer)
     lines, added = [], {"web": False, "pdf": False}
     if web_results and not _URL_RE.search(answer):

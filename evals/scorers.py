@@ -4,8 +4,13 @@ Each scorer returns True/False, or None when it doesn't apply to the task.
 A task passes when every applicable check is True.
 """
 import json
+import os
 import re
+import sys
 import unicodedata
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root: shared abstain.py
+from abstain import ABSTAIN_RE  # noqa: E402,F401
 
 # 1 = original (exact-character matching); 2 = Unicode/unit normalisation + multi-page citation parsing;
 # 3 = also spaces around "/" between letters ("Wh / kg" -> "Wh/kg").
@@ -39,14 +44,9 @@ def normalize(text: str) -> str:
     t = _PER_UNIT_RE.sub(lambda m: "/" + m.group(1), t)
     t = _SPACED_SLASH_RE.sub("/", t)
     return re.sub(r"[ \t]+", " ", t)
+
 URL_RE = re.compile(r"https?://\S+")
-ABSTAIN_RE = re.compile(
-    r"(could ?n[o']t|cannot|can't|unable to|no (relevant )?(information|data|details|mention)"
-    r"|not (mentioned|found|available|provided|specified|stated|included|disclosed)"
-    r"|does(n't| not) (mention|contain|specify|provide|include|say|state)"
-    r"|no sources|did not find|didn't find)",
-    re.I,
-)
+# ABSTAIN_RE is shared with agent.py (v3 skips appended citations on abstentions): see /abstain.py
 
 
 def cited_pages(answer: str) -> set:

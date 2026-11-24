@@ -403,6 +403,16 @@ def test_v3():
     raw = ["garbage {'url': 'https://a.com/1' Kenta Kon Toyota not parseable"]
     assert ap("Kenta Kon of Toyota", [], raw)[0].endswith("- https://a.com/1"), "unparseable results fall back to URL scraping"
 
+    # abstentions get no Sources block, even when the answer overlaps the tool results
+    abst = "The brief does not mention the gravimetric energy density of Helios-7."
+    assert ap(abst, pdf, []) == (abst, none)
+    assert ap("The brief gives the gravimetric energy density of Helios-7.", pdf, [])[1]["pdf"] is True, \
+        "control: same overlap, not an abstention -> appended"
+    assert ap("I could not confirm that Kenta Kon leads Toyota.", [], web)[1] == none, "narrow no-break space still matches"
+    assert ap("Kenta Kon leads Toyota.", [], web)[1]["web"] is True, "control: web answer that is not an abstention"
+    r = run("v3", (FakeLLM(False), FixedAnswerLLM(abst), ForcedPdfLLM()))  # end to end: the PDF was searched, nothing is appended
+    assert r["answer"] == abst and r["citations_appended"] == none and [s["tool"] for s in r["steps"]] == ["pdf_search_tool"]
+
     # ---- 3. parse failures (model HTTP 400): retry once, unforced runner, tool-free only with tool results ----
     zero = {"retries": 0, "unforced_fallbacks": 0, "tool_free_fallbacks": 0, "static_fallbacks": 0}
     rec = lambda **kw: {**zero, **kw}  # noqa: E731

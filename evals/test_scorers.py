@@ -36,6 +36,30 @@ def failed_checks(result):
     return sorted(k for k, v in result["checks"].items() if v is False)
 
 
+class SharedAbstentionRegexTests(unittest.TestCase):
+    """agent.py (v3 skips citations on abstentions) and the scorer must use the same detector."""
+
+    def test_one_regex_object(self):
+        import abstain
+        import scorers
+        self.assertIs(scorers.ABSTAIN_RE, abstain.ABSTAIN_RE)
+
+    def test_agent_side_agrees_with_the_scorers_abstained_check(self):
+        from abstain import is_abstention
+        for text, expected in (
+            ("The brief does not mention any warranty.", True),
+            ("I could not find that in the document.", True),
+            ("I could not find that in the document.", True),    # narrow no-break space
+            ("The volumetric figure is not specified in the brief.", True),
+            ("I cannot determine the warranty.", True),
+            ("Helios-7 reaches 412 Wh/kg. (Source: helios7-brief.pdf, Page 3)", False),
+            ("", False),
+        ):
+            scored = score(TASKS["abstain-01"], trace(text, 1))["checks"]["abstained"]
+            self.assertEqual(is_abstention(text), expected, text)
+            self.assertEqual(scored, expected, f"scorer disagrees on: {text!r}")
+
+
 class ErrorClassificationTests(unittest.TestCase):
     """infra = excluded from pass rates; model = the model's own output failed, counts as FAIL."""
 
